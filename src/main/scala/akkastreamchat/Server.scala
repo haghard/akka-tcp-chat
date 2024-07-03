@@ -12,7 +12,7 @@ import akka.stream.BoundedSourceQueue
 import com.typesafe.config.ConfigFactory
 import domain._
 
-import akkastreamchat.pbdomain.v1.ServerCommand
+import akkastreamchat.pbdomain.v3.ServerCommand
 
 //  https://doc.akka.io/docs/akka/current/stream/stream-io.html
 object Server {

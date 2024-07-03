@@ -4,7 +4,7 @@ import akka.stream.QueueOfferResult
 
 import org.slf4j.Logger
 
-import akkastreamchat.pbdomain.v1.ServerCommand
+import akkastreamchat.pbdomain.v3.ServerCommand
 
 package object akkastreamchat {
 
@@ -30,4 +30,5 @@ package object akkastreamchat {
       log.warn("Failed to broadcast {}", cmd)
       Nil
     }
+
 }

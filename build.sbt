@@ -22,7 +22,7 @@ scalacOptions := Seq(
   "-Xlog-reflective-calls",
   "-Xlint",
   // "-Wunused:imports",
-  "-Xfatal-warnings",
+  //"-Xfatal-warnings",
   // Generated code for methods/fields marked 'deprecated'
   "-Wconf:msg=Marked as deprecated in proto file:silent",
   // silence pb

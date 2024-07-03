@@ -1,11 +1,8 @@
 package akkastreamchat
 
 import java.nio.charset.StandardCharsets
-import java.time.Duration
-import java.time.Instant
-import java.time.ZoneId
-import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.time.{Duration, Instant, ZoneId, ZonedDateTime}
 
 import scala.Console.BOLD
 import scala.Console.GREEN_B
@@ -32,8 +29,8 @@ import akka.stream.scaladsl.Tcp
 import com.bastiaanjansen.otp.HMACAlgorithm
 import com.bastiaanjansen.otp.TOTPGenerator
 import com.typesafe.config.ConfigFactory
-import domain._
-import pbdomain.v1._
+import domain.*
+import pbdomain.v3.*
 
 object Client {
 
@@ -49,7 +46,6 @@ object Client {
       val cfg             = ConfigFactory.load("application.conf").withFallback(ConfigFactory.load())
       implicit val system = ActorSystem[Nothing](Behaviors.empty, "client", cfg)
       import system.executionContext
-
       // system.dispatchers.lookup(DispatcherSelector.fromConfig("fixed-pool"))
 
       run(host, port, Username(username), cfg.getString("server.secret-token")).foreach { _ =>
@@ -70,24 +66,28 @@ object Client {
         iterator => Some(iterator.next()),
         _ => ()
       )
-      .map(SendMessagePB(_))
+      .map(SendMessage(_))
+
+  def time(ts: Long): String =
+    formatter.format(ZonedDateTime.ofInstant(Instant.ofEpochMilli(ts), SERVER_DEFAULT_TZ))
 
   val serverPbCommandToString = Flow[Try[ServerCommand]].map {
     case Success(pbCmd) =>
-      val ts = formatter.format(ZonedDateTime.ofInstant(Instant.ofEpochMilli(pbCmd.ts), SERVER_DEFAULT_TZ))
       pbCmd match {
-        case WelcomePB(user, txt, _) =>
-          s"[$ts] Logged in as ${user.name} \n$txt"
-        case AlertPB(txt, _) =>
-          s"[$ts]: $txt"
-        case DmPB(src, _, txt, _) =>
-          s"${src.name}(DM) [$ts]: $txt"
-        case MsgPB(user, txt, _) =>
-          s"${user.name} [$ts]: $txt"
-        case DisconnectPB(reason, ts) =>
-          s"[$ts]: Server disconnected because: $reason"
-        case ShowAdPB(txt, _) =>
-          s"[$ts]: $txt"
+        case Welcome(user, txt, ts) =>
+          s"[${time(ts)}] Logged in as ${user.name} \n$txt"
+        case Alert(txt, ts) =>
+          s"[${time(ts)}] $txt"
+        case Dm(src, _, txt, ts) =>
+          s"${src.name}(DM) [${time(ts)}]]: $txt"
+        case Msg(user, txt, ts) =>
+          s"${user.name} [${time(ts)}]]: $txt"
+        case Disconnect(reason, ts) =>
+          s"[${time(ts)}]] Server disconnected because: $reason"
+        case ShowAd(txt, ts) =>
+          s"${time(ts)}] $txt"
+        case ServerCommand.Empty =>
+          "Empty"
       }
     case Failure(ex) =>
       s"Error parsing server command: ${ex.getMessage}"
@@ -98,8 +98,8 @@ object Client {
   ): Future[Done] = {
 
     val sink =
-      ProtocolCodecs.ServerCommand.Decoder
-        .takeWhile(!_.toOption.exists(_.isInstanceOf[DisconnectPB]), inclusive = true)
+      ProtocolCodecsV3.ServerCommand.Decoder
+        .takeWhile(!_.toOption.exists(_.isInstanceOf[Disconnect]), inclusive = true)
         .via(serverPbCommandToString)
         .concat(Source.single("Disconnected from server"))
         .toMat(
@@ -135,9 +135,9 @@ object Client {
     val otp = TOTPGen.now()
 
     Source
-      .single(RequestUsernamePB(username, com.google.protobuf.ByteString.copyFromUtf8(otp)))
+      .single(RequestUsername(username, com.google.protobuf.ByteString.copyFromUtf8(otp)))
       .concat(commandsIn())
-      .via(ProtocolCodecs.ClientCommand.Encoder)
+      .via(ProtocolCodecsV3.ClientCommand.Encoder)
       .via(connection)
       .toMat(sink)(Keep.right)
       .run()

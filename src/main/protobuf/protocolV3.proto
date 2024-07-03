@@ -1,67 +1,78 @@
 syntax = "proto3";
-package akkastreamchat.pbdomain.v1;
+package akkastreamchat.pbdomain.v3;
 
 import "scalapb/scalapb.proto";
 import "google/protobuf/timestamp.proto";
-import "google/protobuf/any.proto";
 
 option (scalapb.options) = {
   single_file: true
   flat_package: true
   preserve_unknown_fields: false,
   no_primitive_wrappers: true,
-  preamble: "sealed trait ClientCommand extends scalapb.GeneratedMessage"
-  preamble: "sealed trait ServerCommand extends scalapb.GeneratedMessage { ",
-  preamble: " def ts: Long ",
-  preamble: "} ",
 };
 
-message RequestUsernamePB {
+message ClientCommand {
+  oneof sealed_value {
+    RequestUsername requestUsername = 1;
+    SendMessage sendMessage = 2;
+  }
+}
+
+message RequestUsername {
   option (scalapb.message).extends = "ClientCommand";
   string user = 1 [(scalapb.field).type = " akkastreamchat.domain.Username"];
   bytes otp = 2;
 }
 
-message SendMessagePB {
+message SendMessage {
   option (scalapb.message).extends = "ClientCommand";
   string text = 1;
 }
 
-message WelcomePB {
-  option (scalapb.message).extends = "ServerCommand";
+
+message ServerCommand {
+  oneof sealed_value {
+    Welcome welcome = 100;
+    Alert alert = 101;
+    Dm dm = 102;
+    Msg message = 103;
+    Disconnect disconnect = 104;
+    ShowAd showAd = 105;
+  }
+}
+
+message Welcome {
   string user = 1 [(scalapb.field).type = " akkastreamchat.domain.Username"];
   string txt = 2;
   int64 ts = 3;
 }
 
-message AlertPB {
-  option (scalapb.message).extends = "ServerCommand";
+message Alert {
   string txt = 1;
   int64 ts = 2;
 }
 
-message DmPB {
-  option (scalapb.message).extends = "ServerCommand";
+message Dm {
   string src = 1 [(scalapb.field).type = " akkastreamchat.domain.Username"];
   string desc = 2 [(scalapb.field).type = " akkastreamchat.domain.Username"];
   string txt = 3;
   int64 ts = 4;
 }
 
-message MsgPB {
+message Msg {
   option (scalapb.message).extends = "ServerCommand";
   string user = 1 [(scalapb.field).type = " akkastreamchat.domain.Username"];
   string txt = 2;
   int64 ts = 3;
 }
 
-message DisconnectPB {
+message Disconnect {
   option (scalapb.message).extends = "ServerCommand";
   string reason = 1;
   int64 ts = 2;
 }
 
-message ShowAdPB {
+message ShowAd {
   option (scalapb.message).extends = "ServerCommand";
   string txt = 1;
   int64 ts = 2;

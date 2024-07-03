@@ -1,6 +1,6 @@
 package akkastreamchat
 
-import akkastreamchat.pbdomain.v1.ServerCommand
+import akkastreamchat.pbdomain.v3.ServerCommand
 
 sealed trait ReplyType
 object ReplyType {
