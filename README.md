@@ -24,3 +24,6 @@ Supported commands:
 
 
 
+## Pb links
+https://softwaremill.com/schema-evolution-protobuf-scalapb-fs2grpc/
+https://www.tudorzgureanu.com/define-topic-schema-for-kafka-using-protobuf-with-examples-in-scala/
