@@ -5,7 +5,7 @@ import java.net.InetSocketAddress
 import java.time.LocalDateTime
 import java.util.TimeZone
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.{ConcurrentHashMap, ThreadLocalRandom}
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -72,12 +72,36 @@ final case class Bootstrap(
       .toMat(BroadcastHub.sink(sinkQueueSize))(Keep.both)
       .run()
 
+  val vs =
+    Vector(
+      "1. Bloom Filters",
+      "2. Consistent Hashing",
+      "3. Quorum",
+      "4. Leader and Follower",
+      "5. Heartbeat",
+      "6. Fencing",
+      "7. Write-ahead Log (WAL)",
+      "8. Segmented Log",
+      "9. High-Water mark",
+      "10. Lease",
+      "11. Gossip Protocol",
+      "12. Phi Accrual Failure Detection",
+      "13. Split-brain",
+      "14. Checksum",
+      "15. CAP Theorem",
+      "16. PACELEC Theorem",
+      "17. Hinted Handoff",
+      "18. Read Repair",
+      "19. Merkle Trees"
+    )
+
   Source
     .tick(
       showAdEvery,
       showAdEvery,
-      ShowAd("Toyota: Let's Go Places - Welcome to the New Toyota", System.currentTimeMillis())
+      ()
     )
+    .map(_ => ShowAd(vs(ThreadLocalRandom.current().nextInt(0, vs.size)), System.currentTimeMillis()))
     .to(Sink.foreach(sharedBroadcastQueue.offer(_)))
     .run()
 
@@ -131,7 +155,7 @@ final case class Bootstrap(
               .forEach { entry =>
                 if (entry.getValue == connectionId) {
                   users.remove(entry.getKey)
-                  system.log.info("Client [{}:{}] disconnected ❌", connectionId, entry.getKey.name)
+                  system.log.info(s"Client [{}:{}] disconnected ❌", connectionId, entry.getKey.name)
                   sharedBroadcastQueue
                     .offer(Alert(s"${entry.getKey.name} disconnected", System.currentTimeMillis()))
                 }
@@ -154,19 +178,24 @@ final case class Bootstrap(
         .asInstanceOf[com.sun.management.OperatingSystemMXBean]
         .getTotalMemorySize()
 
-      val jvmInfo = {
-        val rntm = Runtime.getRuntime()
-        s"Cores:${rntm.availableProcessors()} Memory:[Total=${rntm.totalMemory() / 1000000}Mb, Max=${rntm
-            .maxMemory() / 1000000}Mb, Free=${rntm.freeMemory() / 1000000}Mb, RAM=${totalMemory / 1000000} ]"
-      }
+      val jvmInfo =
+        s"""
+          | Cores:${sys.runtime.availableProcessors()}
+          | Memory: {
+          |   Total=${sys.runtime.totalMemory() / 1000000}Mb, Max=${sys.runtime.maxMemory() / 1000000}Mb,
+          |   Free=${sys.runtime.freeMemory() / 1000000}Mb, RAM=${totalMemory / 1000000}
+          | }
+          |""".stripMargin
 
       system.log.info(
         s"""
            |------------- Started: ${binding.localAddress.getHostString} ${binding.localAddress.getPort} ------------------
            |${akkastreamchat.BuildInfo.toString}
            |Environment: [TZ:${TimeZone.getDefault.getID}. Start time:${LocalDateTime.now()}]
-           |PID:${ProcessHandle.current().pid()} JVM: $jvmInfo
-           |👍✅🚀🧪❌😄📣
+           |PID:${ProcessHandle.current().pid()}
+           |JVM:
+           |$jvmInfo
+           |👍✅🚀🧪❌😄📣 🏒🔥
            |---------------------------------------------------------------------------------
            |""".stripMargin
       )

@@ -10,6 +10,7 @@ option (scalapb.options) = {
   flat_package: true
   preserve_unknown_fields: false,
   no_primitive_wrappers: true,
+  no_default_values_in_constructor: true,
   preamble: "sealed trait ClientCommand extends scalapb.GeneratedMessage"
   preamble: "sealed trait ServerCommand extends scalapb.GeneratedMessage { ",
   preamble: " def ts: Long ",

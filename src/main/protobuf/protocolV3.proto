@@ -9,6 +9,7 @@ option (scalapb.options) = {
   flat_package: true
   preserve_unknown_fields: false,
   no_primitive_wrappers: true,
+  no_default_values_in_constructor: true
 };
 
 message ClientCommand {
@@ -32,12 +33,12 @@ message SendMessage {
 
 message ServerCommand {
   oneof sealed_value {
-    Welcome welcome = 100;
-    Alert alert = 101;
-    Dm dm = 102;
-    Msg message = 103;
-    Disconnect disconnect = 104;
-    ShowAd showAd = 105;
+    Welcome welcome = 1;
+    Alert alert = 2;
+    Dm dm = 3;
+    Msg message = 4;
+    Disconnect disconnect = 5;
+    ShowAd showAd = 6;
   }
 }
 
