@@ -2,14 +2,17 @@ package akkastreamchat
 
 import java.io.NotSerializableException
 
-import scala.util.{Failure, Success, Try}
+import scala.util.Failure
+import scala.util.Success
+import scala.util.Try
 
-import akka.stream.scaladsl.{Flow, Framing}
+import akka.stream.scaladsl.Flow
+import akka.stream.scaladsl.Framing
 import akka.util.ByteString
 
 import akkastreamchat.pbdomain.v3.ClientCommandMessage.{SealedValue => C}
 import akkastreamchat.pbdomain.v3.ServerCommandMessage.{SealedValue => S}
-import akkastreamchat.pbdomain.v3.*
+import akkastreamchat.pbdomain.v3._
 
 /*
   How do we go about parsing Protobuf messages without knowing their type in advance?

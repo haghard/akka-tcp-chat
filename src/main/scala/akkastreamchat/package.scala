@@ -10,7 +10,7 @@ package object akkastreamchat {
 
   val Quit = "/quit"
 
-  def writeChannel(
+  def writeOut(
     broadcastQueue: BoundedSourceQueue[ServerCommand],
     cmd: ServerCommand,
     i: Int = 0,
@@ -21,8 +21,8 @@ package object akkastreamchat {
         case QueueOfferResult.Enqueued =>
           Nil
         case QueueOfferResult.Dropped =>
-          Thread.sleep(50)
-          writeChannel(broadcastQueue, cmd, i + 1, limit)
+          Thread.sleep(50) // TODO: fixme
+          writeOut(broadcastQueue, cmd, i + 1, limit)
         case r: QueueCompletionResult =>
           throw new Exception(s"Unexpected $r")
       }

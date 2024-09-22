@@ -5,7 +5,8 @@ import java.net.InetSocketAddress
 import java.time.LocalDateTime
 import java.util.TimeZone
 import java.util.UUID
-import java.util.concurrent.{ConcurrentHashMap, ThreadLocalRandom}
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ThreadLocalRandom
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -16,6 +17,8 @@ import scala.util.Failure
 import scala.util.Success
 import scala.util.control.NonFatal
 
+import akka.Done
+import akka.NotUsed
 import akka.actor.CoordinatedShutdown
 import akka.actor.CoordinatedShutdown.*
 import akka.actor.typed.ActorSystem
@@ -30,10 +33,10 @@ import akka.stream.scaladsl.Sink
 import akka.stream.scaladsl.Source
 import akka.stream.scaladsl.Tcp
 import akka.util.ByteString
-import akka.{Done, NotUsed}
 
 import domain.*
 
+import akkastreamchat.pbdomain.v3.ServerCommandMessage.SealedValue
 import akkastreamchat.pbdomain.v3.*
 
 object Bootstrap {
@@ -129,7 +132,7 @@ final case class Bootstrap(
           { clientCommand =>
             val r = clientCommand match {
               case Success(cmd) =>
-                val (updatedState, reply) = userState.applyCmd(cmd.asMessage.sealedValue)
+                val (updatedState, reply) = userState.applyCmd(cmd.asMessage)
                 userState = updatedState
                 reply
               case Failure(parseError) =>
@@ -141,13 +144,22 @@ final case class Bootstrap(
 
             r.`type` match {
               case ReplyType.Broadcast =>
-                writeChannel(sharedBroadcastQueue, r.cmd)(system.log)
+                writeOut(sharedBroadcastQueue, r.cmd)(system.log)
               case ReplyType.Direct =>
-                r.cmd :: Nil
+                val res =
+                  r.cmd.asMessage.sealedValue match {
+                    case SealedValue.Dm(dm) =>
+                      val recipientId     = users.get(dm.desc)
+                      val recipientOutCon = outgoingCons.get(recipientId)
+                      writeOut(recipientOutCon, dm)(system.log)
+                    case _ =>
+                      Nil
+                  }
+                r.cmd :: res
             }
           }
         }
-        .merge(incomingSrc.merge(outgoingScr, true), true)
+        .merge(incomingSrc.merge(outgoingScr, eagerComplete = true), eagerComplete = true)
         .watchTermination() { (_, termination) =>
           termination.onComplete { _ =>
             users
@@ -195,7 +207,7 @@ final case class Bootstrap(
            |PID:${ProcessHandle.current().pid()}
            |JVM:
            |$jvmInfo
-           |👍✅🚀🧪❌😄📣 🏒🔥
+           |👍✅🚀🧪❌📣🏒🔥🥇😄happy, 😐neutral, 😞sad
            |---------------------------------------------------------------------------------
            |""".stripMargin
       )
@@ -207,7 +219,7 @@ final case class Bootstrap(
           users
             .entrySet()
             .forEach { entry =>
-              writeChannel(
+              writeOut(
                 sharedBroadcastQueue,
                 Alert(s"${entry.getKey.name} disconnected", System.currentTimeMillis())
               )(system.log)

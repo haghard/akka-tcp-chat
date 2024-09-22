@@ -35,7 +35,7 @@ libraryDependencies ++= Seq(
   "com.typesafe.akka" %% "akka-stream" % AkkaVersion,
 
   "com.typesafe.akka" %% "akka-slf4j"      % AkkaVersion,
-  "ch.qos.logback"     % "logback-classic" % "1.2.11",
+  "ch.qos.logback"     % "logback-classic" % "1.2.13",
 
   "com.github.bastiaanjansen" % "otp-java" % "2.0.3",
 

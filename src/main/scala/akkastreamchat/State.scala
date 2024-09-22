@@ -9,14 +9,14 @@ import scala.jdk.CollectionConverters.EnumerationHasAsScala
 
 import akka.stream.BoundedSourceQueue
 
-import domain.*
+import domain._
 import org.slf4j.Logger
 
 import akkastreamchat.pbdomain.v3.ClientCommandMessage.SealedValue
-import akkastreamchat.pbdomain.v3.*
+import akkastreamchat.pbdomain.v3._
 
 sealed trait State {
-  def applyCmd(command: SealedValue): (State, Reply)
+  def applyCmd(command: ClientCommandMessage): (State, Reply)
 }
 
 final case class Idle(
@@ -28,8 +28,8 @@ final case class Idle(
 )(implicit log: Logger)
     extends State { self =>
 
-  def applyCmd(cmd: SealedValue): (State, Reply) =
-    cmd match {
+  def applyCmd(cmd: ClientCommandMessage): (State, Reply) =
+    cmd.sealedValue match {
       case SealedValue.RequestUsername(c) =>
         import com.bastiaanjansen.otp._
         val TOTP = {
@@ -75,14 +75,13 @@ final case class Active(
   username: Username,
   users: ConcurrentHashMap[Username, UUID],
   outgoingCons: ConcurrentHashMap[UUID, BoundedSourceQueue[ServerCommand]]
-)(implicit log: Logger)
-    extends State {
+) extends State {
   self =>
 
   val dmSeparator = ":"
 
-  override def applyCmd(cmd: SealedValue): (State, Reply) = {
-    val response = cmd match {
+  override def applyCmd(cmd: ClientCommandMessage): (State, Reply) = {
+    val response = cmd.sealedValue match {
       case SealedValue.SendMessage(cmd) =>
         if (cmd.text.startsWith("/")) {
           cmd.text match {
@@ -102,10 +101,7 @@ final case class Active(
                 val b = users.keySet().contains(Username(recipient))
 
                 if (a && b) {
-                  val dmMsg           = Dm(username, Username(recipient), text, System.currentTimeMillis())
-                  val recipientId     = users.get(Username(recipient))
-                  val recipientOutCon = outgoingCons.get(recipientId)
-                  writeChannel(recipientOutCon, dmMsg)
+                  val dmMsg = Dm(username, Username(recipient), text, System.currentTimeMillis())
                   Reply(dmMsg, ReplyType.Direct)
                 } else {
                   Reply(

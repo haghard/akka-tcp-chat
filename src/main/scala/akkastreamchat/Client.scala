@@ -1,8 +1,11 @@
 package akkastreamchat
 
 import java.nio.charset.StandardCharsets
+import java.time.Duration
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
-import java.time.{Duration, Instant, ZoneId, ZonedDateTime}
 
 import scala.Console.BOLD
 import scala.Console.GREEN_B
@@ -29,8 +32,8 @@ import akka.stream.scaladsl.Tcp
 import com.bastiaanjansen.otp.HMACAlgorithm
 import com.bastiaanjansen.otp.TOTPGenerator
 import com.typesafe.config.ConfigFactory
-import domain.*
-import pbdomain.v3.*
+import domain._
+import pbdomain.v3._
 
 object Client {
 
