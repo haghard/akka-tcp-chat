@@ -1,14 +1,14 @@
 name := "akka-tcp-chat"
 version := "0.0.1-SNAPSHOT"
-scalaVersion := "2.13.14"
+scalaVersion := "2.13.15"
 startYear := Some(2024)
-developers := List(Developer("haghard", "Vadim Bondarev", "hagard84@gmail.com", url("https://github.com/haghard")))
+developers := List(Developer("haghard", "Vadim Bondarev", "haghard84@gmail.com", url("https://github.com/haghard")))
 licenses += ("Apache-2.0", new URL("https://www.apache.org/licenses/LICENSE-2.0.txt"))
 
 val AkkaVersion = "2.6.21"
 
-//https://repo1.maven.org/maven2/com/lihaoyi/ammonite-compiler_3.3.1/3.0.0-M2-3-b5eb4787/
-val AmmoniteVersion = "3.0.0-M2-3-b5eb4787"
+//https://repo1.maven.org/maven2/com/lihaoyi/ammonite-compiler_3.3.0
+val AmmoniteVersion = "3.0.0"
 
 scalacOptions := Seq(
   //"-Xsource:3",
@@ -35,7 +35,7 @@ libraryDependencies ++= Seq(
   "com.typesafe.akka" %% "akka-stream" % AkkaVersion,
 
   "com.typesafe.akka" %% "akka-slf4j"      % AkkaVersion,
-  "ch.qos.logback"     % "logback-classic" % "1.2.13",
+  "ch.qos.logback"     % "logback-classic" % "1.5.6",
 
   "com.github.bastiaanjansen" % "otp-java" % "2.0.3",
 
