@@ -45,7 +45,7 @@ libraryDependencies ++= Seq(
   "org.scalatest" %% "scalatest" % "3.2.19" % Test
 )
 
-run / fork := true //false for ammonite
+run / fork := true //Set it "false" for ammonite (test:run)
 run / connectInput := true
 
 javaOptions ++= Seq(

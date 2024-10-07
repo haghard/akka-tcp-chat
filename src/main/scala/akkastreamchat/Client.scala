@@ -82,7 +82,7 @@ object Client {
         case Alert(txt, ts) =>
           s"[${time(ts)}] $txt"
         case Dm(src, _, txt, ts) =>
-          s"${src.name}(DM) [${time(ts)}]]: $txt"
+          s"(DM) from ${src.name} [${time(ts)}]]: $txt"
         case Msg(user, txt, ts) =>
           s"${user.name} [${time(ts)}]]: $txt"
         case Disconnect(reason, ts) =>

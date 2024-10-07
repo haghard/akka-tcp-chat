@@ -23,15 +23,13 @@ import akka.actor.CoordinatedShutdown
 import akka.actor.CoordinatedShutdown.*
 import akka.actor.typed.ActorSystem
 import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
-import akka.stream.Attributes
-import akka.stream.BoundedSourceQueue
-import akka.stream.KillSwitches
 import akka.stream.scaladsl.BroadcastHub
 import akka.stream.scaladsl.Flow
 import akka.stream.scaladsl.Keep
 import akka.stream.scaladsl.Sink
 import akka.stream.scaladsl.Source
 import akka.stream.scaladsl.Tcp
+import akka.stream.{Attributes, BoundedSourceQueue, KillSwitches, OverflowStrategy}
 import akka.util.ByteString
 
 import domain.*
@@ -54,8 +52,8 @@ final case class Bootstrap(
   import system.executionContext
   val shutdown = CoordinatedShutdown(system)
 
-  val sinkQueueSize      = 1 << 5
-  val broadcastQueueSize = 1 << 7
+  val dmQueueSize        = 1 << 3
+  val broadcastQueueSize = 1 << 5
 
   val loggingAdapter = system.toClassic.log
   val secretToken    = system.settings.config.getString("server.secret-token")
@@ -72,7 +70,7 @@ final case class Bootstrap(
       .log("chat", cmd => s"$cmd bq-size:${sharedBroadcastQueue.size()}")(loggingAdapter)
       .withAttributes(Attributes.logLevels(akka.event.Logging.InfoLevel))
       .viaMat(KillSwitches.single)(Keep.right)
-      .toMat(BroadcastHub.sink(sinkQueueSize))(Keep.both)
+      .toMat(BroadcastHub.sink(2))(Keep.both)
       .run()
 
   val vs =
@@ -113,8 +111,9 @@ final case class Bootstrap(
     val remoteAddress: InetSocketAddress = incomingConnection.remoteAddress
     system.log.info("New client {} from {}:{}", connectionId, remoteAddress.getHostString, remoteAddress.getPort)
 
-    val (outgoingCon, outgoingScr) = Source.queue[ServerCommand](sinkQueueSize).preMaterialize()
-    outgoingCons.putIfAbsent(connectionId, outgoingCon)
+    // DM
+    val (dmQueue, dmScr) = Source.queue[ServerCommand](dmQueueSize).preMaterialize()
+    outgoingCons.putIfAbsent(connectionId, dmQueue)
 
     val cFlow: Flow[ByteString, ByteString, NotUsed] =
       ProtocolCodecsV3.ClientCommand.Decoder
@@ -126,6 +125,8 @@ final case class Bootstrap(
             }
           case Failure(_) => false
         }
+        .buffer(broadcastQueueSize, OverflowStrategy.backpressure)
+        // .scan(Idle(secretToken, connectionId, remoteAddress, users, outgoingCons)(system.log)) { (s, clientCommand) => s }
         .statefulMapConcat { () =>
           var userState: State = Idle(secretToken, connectionId, remoteAddress, users, outgoingCons)(system.log)
 
@@ -149,9 +150,9 @@ final case class Bootstrap(
                 val res =
                   r.cmd.asMessage.sealedValue match {
                     case SealedValue.Dm(dm) =>
-                      val recipientId     = users.get(dm.desc)
-                      val recipientOutCon = outgoingCons.get(recipientId)
-                      writeOut(recipientOutCon, dm)(system.log)
+                      val recipientId = users.get(dm.desc)
+                      val dmQueue     = outgoingCons.get(recipientId)
+                      writeOut(dmQueue, dm)(system.log)
                     case _ =>
                       Nil
                   }
@@ -159,7 +160,7 @@ final case class Bootstrap(
             }
           }
         }
-        .merge(incomingSrc.merge(outgoingScr, eagerComplete = true), eagerComplete = true)
+        .merge(incomingSrc.merge(dmScr, eagerComplete = true), eagerComplete = true)
         .watchTermination() { (_, termination) =>
           termination.onComplete { _ =>
             users
