@@ -2,7 +2,6 @@ package akkastreamchat
 
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
-import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.jdk.CollectionConverters.EnumerationHasAsScala
@@ -21,10 +20,10 @@ sealed trait State {
 
 final case class Idle(
   secretToken: String,
-  connectionId: UUID,
+  connectionId: String,
   remoteAddress: InetSocketAddress,
-  users: ConcurrentHashMap[Username, UUID],
-  outgoingChannels: ConcurrentHashMap[UUID, BoundedSourceQueue[ServerCommand]]
+  users: ConcurrentHashMap[Username, String],
+  outgoingChannels: ConcurrentHashMap[String, BoundedSourceQueue[ServerCommand]]
 )(implicit log: Logger)
     extends State { self =>
 
@@ -66,15 +65,15 @@ final case class Idle(
     }
 
   override def toString: String =
-    s"Idle(${connectionId.toString},users=${users})"
+    s"Idle(${connectionId},users=${users})"
 
 }
 
 final case class Active(
-  connectionId: UUID,
+  connectionId: String,
   username: Username,
-  users: ConcurrentHashMap[Username, UUID],
-  outgoingCons: ConcurrentHashMap[UUID, BoundedSourceQueue[ServerCommand]]
+  users: ConcurrentHashMap[Username, String],
+  outgoingCons: ConcurrentHashMap[String, BoundedSourceQueue[ServerCommand]]
 ) extends State {
   self =>
 
@@ -90,8 +89,11 @@ final case class Active(
                 Alert(users.keys().asScala.map(_.name).mkString(", "), System.currentTimeMillis()),
                 ReplyType.Direct
               )
+            case "/recent" =>
+              Reply(ShowRecent(username, Seq.empty), ReplyType.Direct)
             case other =>
               // /dm:adam:hello world
+              // /DM:adam:hello world1111
               if (cmd.text.startsWith("/dm") || cmd.text.startsWith("/DM")) {
                 val segments  = cmd.text.split(dmSeparator)
                 val recipient = segments(1)
@@ -124,21 +126,10 @@ final case class Active(
           Disconnect(s"Unexpected cmd: ${c.getClass.getName} in Active", System.currentTimeMillis()),
           ReplyType.Direct
         )
-      /*case c: SealedValue.RequestUsername =>
-        Reply(
-          Disconnect(s"Unexpected cmd: ${c.getClass.getName} in Active", System.currentTimeMillis()),
-          ReplyType.Direct
-        )
-
-      case SealedValue.Empty =>
-        Reply(
-          Disconnect(s"Unexpected cmd: Empty in Active", System.currentTimeMillis()),
-          ReplyType.Direct
-        )*/
     }
     (self, response)
   }
 
   override def toString: String =
-    s"Active(${connectionId.toString},${username.name},users=${users})"
+    s"Active(${connectionId},${username.name},users=$users)"
 }

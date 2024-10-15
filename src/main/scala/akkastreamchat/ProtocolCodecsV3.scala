@@ -10,6 +10,8 @@ import akka.stream.scaladsl.Flow
 import akka.stream.scaladsl.Framing
 import akka.util.ByteString
 
+import com.google.protobuf.any.{Any => ScalaPBAny}
+
 import akkastreamchat.pbdomain.v3.ClientCommandMessage.{SealedValue => C}
 import akkastreamchat.pbdomain.v3.ServerCommandMessage.{SealedValue => S}
 import akkastreamchat.pbdomain.v3._
@@ -26,12 +28,11 @@ object ProtocolCodecsV3 {
   val maximumFrameSize = 1024 * 5
 
   object ClientCommand {
-
     val Decoder: Flow[ByteString, Try[ClientCommand], akka.NotUsed] =
       Flow[ByteString]
         .via(Framing.simpleFramingProtocolDecoder(maximumFrameSize))
         .map { bsFrame =>
-          val pbAny   = com.google.protobuf.any.Any.parseFrom(bsFrame.toArrayUnsafe())
+          val pbAny   = ScalaPBAny.parseFrom(bsFrame.toArrayUnsafe())
           val typeUrl = pbAny.typeUrl
           if (pbAny.is[akkastreamchat.pbdomain.v3.ClientCommandMessage]) {
             pbAny.unpack[akkastreamchat.pbdomain.v3.ClientCommandMessage].sealedValue match {
@@ -50,7 +51,7 @@ object ProtocolCodecsV3 {
     val Encoder: Flow[ClientCommand, ByteString, akka.NotUsed] =
       Flow
         .fromFunction { (clientCmd: ClientCommand) =>
-          ByteString(com.google.protobuf.any.Any.pack(clientCmd.asMessage).toByteArray)
+          ByteString(ScalaPBAny.pack(clientCmd.asMessage).toByteArray)
         }
         .via(Framing.simpleFramingProtocolEncoder(maximumFrameSize))
   }
@@ -61,7 +62,7 @@ object ProtocolCodecsV3 {
       Flow[ByteString]
         .via(Framing.simpleFramingProtocolDecoder(maximumFrameSize))
         .map { bsFrame =>
-          val pbAny   = com.google.protobuf.any.Any.parseFrom(bsFrame.toArrayUnsafe())
+          val pbAny   = ScalaPBAny.parseFrom(bsFrame.toArrayUnsafe())
           val typeUrl = pbAny.typeUrl
           if (pbAny.is[akkastreamchat.pbdomain.v3.ServerCommandMessage]) {
             pbAny.unpack[akkastreamchat.pbdomain.v3.ServerCommandMessage].sealedValue match {
@@ -77,6 +78,8 @@ object ProtocolCodecsV3 {
                 Success(c.value)
               case c: S.ShowAd =>
                 Success(c.value)
+              case c: S.ShowRecent =>
+                Success(c.value)
               case S.Empty =>
                 Failure(notSerializable(s"Unknown ServerCommandMessage: $typeUrl"))
             }
@@ -89,11 +92,7 @@ object ProtocolCodecsV3 {
       Flow
         .fromFunction { (serverCmd: ServerCommand) =>
           ByteString(
-            com.google.protobuf.any.Any
-              .pack[akkastreamchat.pbdomain.v3.ServerCommandMessage](
-                serverCmd.asMessage
-              )
-              .toByteArray
+            ScalaPBAny.pack[akkastreamchat.pbdomain.v3.ServerCommandMessage](serverCmd.asMessage).toByteArray
           )
         }
         .via(Framing.simpleFramingProtocolEncoder(maximumFrameSize))

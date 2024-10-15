@@ -39,6 +39,7 @@ message ServerCommand {
     Msg message = 4;
     Disconnect disconnect = 5;
     ShowAd showAd = 6;
+    ShowRecent showRecent = 7;
   }
 }
 
@@ -77,4 +78,10 @@ message ShowAd {
   option (scalapb.message).extends = "ServerCommand";
   string txt = 1;
   int64 ts = 2;
+}
+
+message ShowRecent {
+  option (scalapb.message).extends = "ServerCommand";
+  string user = 1 [(scalapb.field).type = " akkastreamchat.domain.Username"];
+  repeated Msg msgs = 2;
 }

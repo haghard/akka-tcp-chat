@@ -1,18 +1,15 @@
 package akkastreamchat
 
 import java.lang.management.ManagementFactory
-import java.net.InetSocketAddress
 import java.time.LocalDateTime
 import java.util.TimeZone
-import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ThreadLocalRandom
 
-import scala.concurrent.ExecutionContext
-import scala.concurrent.Future
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.duration.NANOSECONDS
+import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.Failure
 import scala.util.Success
 import scala.util.control.NonFatal
@@ -23,13 +20,8 @@ import akka.actor.CoordinatedShutdown
 import akka.actor.CoordinatedShutdown.*
 import akka.actor.typed.ActorSystem
 import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
-import akka.stream.scaladsl.BroadcastHub
-import akka.stream.scaladsl.Flow
-import akka.stream.scaladsl.Keep
-import akka.stream.scaladsl.Sink
-import akka.stream.scaladsl.Source
-import akka.stream.scaladsl.Tcp
-import akka.stream.{Attributes, BoundedSourceQueue, KillSwitches, OverflowStrategy}
+import akka.stream.scaladsl.{BroadcastHub, Flow, Keep, Sink, Source, Tcp}
+import akka.stream.{Attributes, BoundedSourceQueue, KillSwitches}
 import akka.util.ByteString
 
 import domain.*
@@ -44,16 +36,16 @@ object Bootstrap {
 final case class Bootstrap(
   host: String,
   port: Int,
-  users: ConcurrentHashMap[Username, UUID],
-  outgoingCons: ConcurrentHashMap[UUID, BoundedSourceQueue[ServerCommand]]
+  users: ConcurrentHashMap[Username, String],
+  dmQueues: ConcurrentHashMap[String, BoundedSourceQueue[ServerCommand]]
 )(implicit
   system: ActorSystem[Nothing]
 ) {
   import system.executionContext
   val shutdown = CoordinatedShutdown(system)
 
-  val dmQueueSize        = 1 << 3
-  val broadcastQueueSize = 1 << 5
+  val dmQueueSize        = 1 << 2
+  val broadcastQueueSize = 1 << 5 // shared queue for all connected client
 
   val loggingAdapter = system.toClassic.log
   val secretToken    = system.settings.config.getString("server.secret-token")
@@ -62,15 +54,15 @@ final case class Bootstrap(
     NANOSECONDS
   )
 
-  val showAdEvery                 = 90.seconds
-  val (sharedBroadcastQueue, src) = Source.queue[ServerCommand](broadcastQueueSize).preMaterialize()
+  val showAdEvery           = 90.seconds
+  val (broadcastQueue, src) = Source.queue[ServerCommand](broadcastQueueSize).preMaterialize()
 
-  val (ks, incomingSrc) =
+  val (ks, sharedBroadcastSrc) =
     src
-      .log("chat", cmd => s"$cmd bq-size:${sharedBroadcastQueue.size()}")(loggingAdapter)
+      .log("chat", cmd => s"$cmd bq-size:${broadcastQueue.size()}")(loggingAdapter)
       .withAttributes(Attributes.logLevels(akka.event.Logging.InfoLevel))
       .viaMat(KillSwitches.single)(Keep.right)
-      .toMat(BroadcastHub.sink(2))(Keep.both)
+      .toMat(BroadcastHub.sink[ServerCommand](1))(Keep.both)
       .run()
 
   val vs =
@@ -103,19 +95,21 @@ final case class Bootstrap(
       ()
     )
     .map(_ => ShowAd(vs(ThreadLocalRandom.current().nextInt(0, vs.size)), System.currentTimeMillis()))
-    .to(Sink.foreach(sharedBroadcastQueue.offer(_)))
+    .to(Sink.foreach(broadcastQueue.offer(_)))
     .run()
 
-  val handler = Sink.foreach[Tcp.IncomingConnection] { incomingConnection =>
-    val connectionId                     = UUID.randomUUID()
-    val remoteAddress: InetSocketAddress = incomingConnection.remoteAddress
-    system.log.info("New client {} from {}:{}", connectionId, remoteAddress.getHostString, remoteAddress.getPort)
+  val connectionHandler = Sink.foreach[Tcp.IncomingConnection] { incomingConnection =>
+    val connectionId  = wvlet.airframe.ulid.ULID.newULID.toString
+    val remoteAddress = incomingConnection.remoteAddress
+    system.log.info("New Connection({}) from {}:{}", connectionId, remoteAddress.getHostString, remoteAddress.getPort)
 
-    // DM
     val (dmQueue, dmScr) = Source.queue[ServerCommand](dmQueueSize).preMaterialize()
-    outgoingCons.putIfAbsent(connectionId, dmQueue)
+    dmQueues.putIfAbsent(connectionId, dmQueue)
 
-    val cFlow: Flow[ByteString, ByteString, NotUsed] =
+    val mergedDmAndBroadcastSrc: Source[ServerCommand, NotUsed] =
+      sharedBroadcastSrc.merge(dmScr, eagerComplete = true)
+
+    val chatFlow: Flow[ByteString, ByteString, NotUsed] =
       ProtocolCodecsV3.ClientCommand.Decoder
         .takeWhile {
           case Success(cmd) =>
@@ -125,13 +119,11 @@ final case class Bootstrap(
             }
           case Failure(_) => false
         }
-        .buffer(broadcastQueueSize, OverflowStrategy.backpressure)
-        // .scan(Idle(secretToken, connectionId, remoteAddress, users, outgoingCons)(system.log)) { (s, clientCommand) => s }
         .statefulMapConcat { () =>
-          var userState: State = Idle(secretToken, connectionId, remoteAddress, users, outgoingCons)(system.log)
+          var userState: State = Idle(secretToken, connectionId, remoteAddress, users, dmQueues)(system.log)
 
           { clientCommand =>
-            val r = clientCommand match {
+            val reply = clientCommand match {
               case Success(cmd) =>
                 val (updatedState, reply) = userState.applyCmd(cmd.asMessage)
                 userState = updatedState
@@ -142,35 +134,86 @@ final case class Bootstrap(
                   ReplyType.Direct
                 )
             }
-
-            r.`type` match {
-              case ReplyType.Broadcast =>
-                writeOut(sharedBroadcastQueue, r.cmd)(system.log)
-              case ReplyType.Direct =>
-                val res =
-                  r.cmd.asMessage.sealedValue match {
-                    case SealedValue.Dm(dm) =>
-                      val recipientId = users.get(dm.desc)
-                      val dmQueue     = outgoingCons.get(recipientId)
-                      writeOut(dmQueue, dm)(system.log)
-                    case _ =>
-                      Nil
-                  }
-                r.cmd :: res
-            }
+            Seq(reply)
           }
         }
-        .merge(incomingSrc.merge(dmScr, eagerComplete = true), eagerComplete = true)
-        .watchTermination() { (_, termination) =>
-          termination.onComplete { _ =>
+        .mapAsync(1) { reply =>
+          // writer.ask[akkastreamchat.pbdomain.v3.ServerCommand](Protocol.Write(reply, _))
+          val p = Promise[ServerCommand]()
+          reply.`type` match {
+            case ReplyType.Broadcast =>
+              sendOne(broadcastQueue, reply.cmd, p)
+            case ReplyType.Direct =>
+              reply.cmd.asMessage.sealedValue match {
+                case SealedValue.Dm(dm) =>
+                  try {
+                    val toId = users.get(dm.desc)
+                    val to   = dmQueues.get(toId)
+
+                    val fromId = users.get(dm.src)
+                    val from   = dmQueues.get(fromId)
+
+                    sendDm(to, from, dm, p)
+                  } catch {
+                    case NonFatal(ex) =>
+                      val msg = s"Failed to send a DM(${dm.src},${dm.desc})"
+                      loggingAdapter.error(ex, msg)
+                      p.failure(new Exception(msg))
+                  }
+
+                case SealedValue.Welcome(w) =>
+                  try {
+                    val usr = users.get(w.user)
+                    sendOne(dmQueues.get(usr), w, p)
+                  } catch {
+                    case NonFatal(ex) =>
+                      val msg = s"Failed to send a Welcome(${w.user}"
+                      loggingAdapter.error(ex, msg)
+                      p.failure(ex)
+                  }
+
+                case SealedValue.ShowRecent(c) =>
+                  try {
+                    // reply from memory
+                    val recent = c.withMsgs(
+                      Seq(
+                        akkastreamchat.pbdomain.v3.Msg(Username("jack"), "aaaaaa", System.currentTimeMillis()),
+                        akkastreamchat.pbdomain.v3.Msg(Username("b"), "bbbbbb", System.currentTimeMillis()),
+                        akkastreamchat.pbdomain.v3.Msg(Username("c"), "ccc", System.currentTimeMillis())
+                      )
+                    )
+                    val qId = users.get(c.user)
+                    val q   = dmQueues.get(qId)
+                    sendOne(q, recent, p)
+                  } catch {
+                    case NonFatal(ex) =>
+                      val msg = "Failed to send recent hist"
+                      loggingAdapter.error(ex, msg)
+                      p.failure(ex)
+                  }
+                case other =>
+                  val msg = s"Unexpected $other"
+                  val ex  = new Exception(msg)
+                  loggingAdapter.error(ex, msg)
+                  p.failure(ex)
+              }
+          }
+          p.future
+        }
+        .mapConcat { _ =>
+          // Drain a cmd to self"
+          List.empty
+        }
+        .merge(mergedDmAndBroadcastSrc, eagerComplete = true)
+        .watchTermination() { (_, doneF) =>
+          doneF.onComplete { _ =>
             users
               .entrySet()
               .forEach { entry =>
                 if (entry.getValue == connectionId) {
                   users.remove(entry.getKey)
                   system.log.info(s"Client [{}:{}] disconnected ❌", connectionId, entry.getKey.name)
-                  sharedBroadcastQueue
-                    .offer(Alert(s"${entry.getKey.name} disconnected", System.currentTimeMillis()))
+                  broadcastQueue.offer(Alert(s"${entry.getKey.name} disconnected", System.currentTimeMillis()))
                 }
               }
           }
@@ -178,11 +221,16 @@ final case class Bootstrap(
         }
         .via(ProtocolCodecsV3.ServerCommand.Encoder)
 
-    incomingConnection.handleWith(cFlow)
+    /*
+    val mergeFlow = appFlow0.merge(src0).alsoTo(sink0)
+    incomingConnection.handleWith(mergeFlow)
+     */
+
+    incomingConnection.handleWith(chatFlow)
   }
 
   val cons    = Tcp(system).bind(host, port)
-  val binding = cons.watchTermination()(Keep.left).to(handler).run()
+  val binding = cons.watchTermination()(Keep.left).to(connectionHandler).run()
 
   binding.onComplete {
     case Success(binding) =>
@@ -213,24 +261,26 @@ final case class Bootstrap(
            |""".stripMargin
       )
 
-      val delay = deadline - 1.seconds
+      val delay = deadline - 2.seconds
       shutdown.addTask(PhaseBeforeServiceUnbind, "before-tcp-unbind") { () =>
-        Future {
-          system.log.info("★ ★ ★ CoordinatedShutdown [before-unbind] ★ ★ ★")
-          users
-            .entrySet()
-            .forEach { entry =>
-              writeOut(
-                sharedBroadcastQueue,
-                Alert(s"${entry.getKey.name} disconnected", System.currentTimeMillis())
-              )(system.log)
-            }
-          Done
-        }.flatMap(_ => akka.pattern.after(delay)(Future.successful(Done)))(ExecutionContext.parasitic)
+        val p = Promise[ServerCommand]()
+        system.log.info("★ ★ ★ CoordinatedShutdown [before-unbind] ★ ★ ★")
+        users
+          .entrySet()
+          .forEach { entry =>
+            sendOne(
+              broadcastQueue,
+              Alert(s"${entry.getKey.name} disconnected", System.currentTimeMillis()),
+              p
+            )
+          }
+
+        p.future
+          .flatMap(_ => akka.pattern.after(delay)(Future.successful(Done)))(ExecutionContext.parasitic)
       }
 
       shutdown.addTask(PhaseServiceUnbind, "tcp-unbind") { () =>
-        try sharedBroadcastQueue.complete()
+        try broadcastQueue.complete()
         catch {
           case NonFatal(_) =>
         }
@@ -246,7 +296,7 @@ final case class Bootstrap(
       shutdown.addTask(PhaseServiceRequestsDone, "tcp-terminate") { () =>
         binding.whenUnbound.map { _ =>
           try {
-            sharedBroadcastQueue.fail(new Exception("BroadcastQueue.complete timeout!"))
+            broadcastQueue.fail(new Exception("BroadcastQueue.complete timeout!"))
             ks.abort(new Exception("Ks.abort timeout!"))
           } catch {
             case NonFatal(_) =>

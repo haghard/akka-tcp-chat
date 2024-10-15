@@ -7,11 +7,7 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
-import scala.Console.BOLD
-import scala.Console.GREEN_B
-import scala.Console.RED_B
-import scala.Console.RESET
-import scala.Console.WHITE
+import scala.Console._
 import scala.Console.println
 import scala.concurrent.Future
 import scala.io.StdIn
@@ -78,22 +74,24 @@ object Client {
     case Success(pbCmd) =>
       pbCmd match {
         case Welcome(user, txt, ts) =>
-          s"[${time(ts)}] Logged in as ${user.name} \n$txt"
+          Seq(s"[${time(ts)}] Logged in as ${user.name} \n$txt")
         case Alert(txt, ts) =>
-          s"[${time(ts)}] $txt"
+          Seq(s"[${time(ts)}] $txt")
         case Dm(src, _, txt, ts) =>
-          s"(DM) from ${src.name} [${time(ts)}]]: $txt"
+          Seq(s"(DM) from ${src.name} [${time(ts)}]]: $txt")
         case Msg(user, txt, ts) =>
-          s"${user.name} [${time(ts)}]]: $txt"
+          Seq(s"${user.name} [${time(ts)}]]: $txt")
         case Disconnect(reason, ts) =>
-          s"[${time(ts)}]] Server disconnected because: $reason"
+          Seq(s"[${time(ts)}]] Server disconnected because: $reason")
         case ShowAd(txt, ts) =>
-          s"${time(ts)}] $txt"
+          Seq(s"${time(ts)}] $txt")
+        case ShowRecent(_, msgs) =>
+          msgs.map(m => s"${m.user.name} [${time(m.ts)}]]: ${m.txt}")
         case ServerCommand.Empty =>
-          "Empty"
+          Seq("Empty")
       }
     case Failure(ex) =>
-      s"Error parsing server command: ${ex.getMessage}"
+      Seq(s"Error parsing server command: ${ex.getMessage}")
   }
 
   def run(host: String, port: Int, username: Username, secretToken: String)(implicit
@@ -104,11 +102,20 @@ object Client {
       ProtocolCodecsV3.ServerCommand.Decoder
         .takeWhile(!_.toOption.exists(_.isInstanceOf[Disconnect]), inclusive = true)
         .via(serverPbCommandToString)
-        .concat(Source.single("Disconnected from server"))
+        .concat(Source.single(Seq("Disconnected from server")))
         .toMat(
-          Sink.foreach { txt =>
-            if (txt.startsWith(username.name)) println(s"$GREEN_B$BOLD$WHITE  $txt $RESET")
-            else println(s"$RED_B$BOLD$WHITE  $txt $RESET")
+          Sink.foreach { texts =>
+            if (texts.size == 1) {
+              val txt = texts(0)
+              if (txt.startsWith(username.name)) println(s"$GREEN_B$BOLD$WHITE${txt}$RESET")
+              else println(s"$RED_B$BOLD$WHITE${txt}$RESET")
+            } else {
+              // recent hist
+              texts.foreach { txt =>
+                if (txt.startsWith(username.name)) println(s"$GREEN_B$BOLD$WHITE${txt}$RESET")
+                else println(s"$RED_B$BOLD$WHITE${txt}$RESET")
+              }
+            }
           }
         )(Keep.right)
 

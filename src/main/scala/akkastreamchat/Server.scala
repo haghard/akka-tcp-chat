@@ -1,6 +1,5 @@
 package akkastreamchat
 
-import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.concurrent.duration._
@@ -17,9 +16,8 @@ import akkastreamchat.pbdomain.v3.ServerCommand
 //  https://doc.akka.io/docs/akka/current/stream/stream-io.html
 object Server {
 
-  // Add sharding
-  val users        = new ConcurrentHashMap[Username, UUID]()
-  val outgoingCons = new ConcurrentHashMap[UUID, BoundedSourceQueue[ServerCommand]]()
+  val users    = new ConcurrentHashMap[Username, String]()
+  val dmQueues = new ConcurrentHashMap[String, BoundedSourceQueue[ServerCommand]]()
 
   def main(args: Array[String]): Unit = {
     val host = args(0)
@@ -32,7 +30,7 @@ object Server {
       NANOSECONDS
     )
 
-    Bootstrap(host, port, users, outgoingCons)
+    Bootstrap(host, port, users, dmQueues)
 
     val _ = scala.io.StdIn.readLine()
     system.log.info("★ ★ ★ ★ ★ ★  Shutting down ❌... ★ ★ ★ ★ ★ ★")
