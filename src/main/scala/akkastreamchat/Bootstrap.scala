@@ -109,6 +109,31 @@ final case class Bootstrap(
     val mergedDmAndBroadcastSrc: Source[ServerCommand, NotUsed] =
       sharedBroadcastSrc.merge(dmScr, eagerComplete = true)
 
+    /*Flow[ClientCommand]
+      // .scan()
+      .map { cc: ClientCommand =>
+        val sCmd: ServerCommand = ???
+        sCmd
+      }
+      .alsoTo(???)
+      .via(ProtocolCodecsV3.ServerCommand.Encoder)
+      .to(???)
+     */
+
+    // 3.
+    /*
+    val (in, sinkQ) = Sink.queue[ClientCommand](1).preMaterialize()
+    in.pull().map {
+      case Some(cc) =>
+        broadcastQueue.offer(???)
+      case None =>
+        ???
+    }
+    val sink = ProtocolCodecsV3.ClientCommand.Decoder2.to(sinkQ)
+    val src = sharedBroadcastSrc.via(ProtocolCodecsV3.ServerCommand.Encoder)
+    Flow.fromSinkAndSourceCoupled(sink, src)
+     */
+
     val chatFlow: Flow[ByteString, ByteString, NotUsed] =
       ProtocolCodecsV3.ClientCommand.Decoder
         .takeWhile {
@@ -177,9 +202,9 @@ final case class Bootstrap(
                     // reply from memory
                     val recent = c.withMsgs(
                       Seq(
-                        akkastreamchat.pbdomain.v3.Msg(Username("jack"), "aaaaaa", System.currentTimeMillis()),
-                        akkastreamchat.pbdomain.v3.Msg(Username("b"), "bbbbbb", System.currentTimeMillis()),
-                        akkastreamchat.pbdomain.v3.Msg(Username("c"), "ccc", System.currentTimeMillis())
+                        akkastreamchat.pbdomain.v3.Msg(Username("jack"), "aaaaaa", System.currentTimeMillis(), ""),
+                        akkastreamchat.pbdomain.v3.Msg(Username("b"), "bbbbbb", System.currentTimeMillis(), ""),
+                        akkastreamchat.pbdomain.v3.Msg(Username("c"), "ccc", System.currentTimeMillis(), "")
                       )
                     )
                     val qId = users.get(c.user)
@@ -210,8 +235,9 @@ final case class Bootstrap(
             users
               .entrySet()
               .forEach { entry =>
-                if (entry.getValue == connectionId) {
-                  users.remove(entry.getKey)
+                if (entry.getValue() == connectionId) {
+                  system.log.info("rem.0 " + users.remove(entry.getKey))
+                  system.log.info("rem.1" + dmQueues.remove(connectionId))
                   system.log.info(s"Client [{}:{}] disconnected ❌", connectionId, entry.getKey.name)
                   broadcastQueue.offer(Alert(s"${entry.getKey.name} disconnected", System.currentTimeMillis()))
                 }
@@ -227,6 +253,7 @@ final case class Bootstrap(
      */
 
     incomingConnection.handleWith(chatFlow)
+    // incomingConnection.handleWith(chatFlow)
   }
 
   val cons    = Tcp(system).bind(host, port)
@@ -262,23 +289,6 @@ final case class Bootstrap(
       )
 
       val delay = deadline - 2.seconds
-      shutdown.addTask(PhaseBeforeServiceUnbind, "before-tcp-unbind") { () =>
-        val p = Promise[ServerCommand]()
-        system.log.info("★ ★ ★ CoordinatedShutdown [before-unbind] ★ ★ ★")
-        users
-          .entrySet()
-          .forEach { entry =>
-            sendOne(
-              broadcastQueue,
-              Alert(s"${entry.getKey.name} disconnected", System.currentTimeMillis()),
-              p
-            )
-          }
-
-        p.future
-          .flatMap(_ => akka.pattern.after(delay)(Future.successful(Done)))(ExecutionContext.parasitic)
-      }
-
       shutdown.addTask(PhaseServiceUnbind, "tcp-unbind") { () =>
         try broadcastQueue.complete()
         catch {
@@ -294,16 +304,18 @@ final case class Bootstrap(
       }
 
       shutdown.addTask(PhaseServiceRequestsDone, "tcp-terminate") { () =>
-        binding.whenUnbound.map { _ =>
-          try {
-            broadcastQueue.fail(new Exception("BroadcastQueue.complete timeout!"))
-            ks.abort(new Exception("Ks.abort timeout!"))
-          } catch {
-            case NonFatal(_) =>
+        binding.whenUnbound
+          .map { _ =>
+            try {
+              broadcastQueue.fail(new Exception("BroadcastQueue.complete timeout!"))
+              ks.abort(new Exception("Ks.abort timeout!"))
+            } catch {
+              case NonFatal(_) =>
+            }
+            system.log.info("★ ★ ★ CoordinatedShutdown [tcp.terminate]  ★ ★ ★")
+            Done
           }
-          system.log.info("★ ★ ★ CoordinatedShutdown [tcp.terminate]  ★ ★ ★")
-          Done
-        }(ExecutionContext.parasitic)
+          .flatMap(_ => akka.pattern.after(delay)(Future.successful(Done)))
       }
 
       shutdown.addTask(PhaseActorSystemTerminate, "actor-system-terminate") { () =>

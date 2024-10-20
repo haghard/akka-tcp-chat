@@ -77,9 +77,9 @@ object Client {
           Seq(s"[${time(ts)}] Logged in as ${user.name} \n$txt")
         case Alert(txt, ts) =>
           Seq(s"[${time(ts)}] $txt")
-        case Dm(src, _, txt, ts) =>
+        case Dm(src, _, txt, ts, _) =>
           Seq(s"(DM) from ${src.name} [${time(ts)}]]: $txt")
-        case Msg(user, txt, ts) =>
+        case Msg(user, txt, ts, _) =>
           Seq(s"${user.name} [${time(ts)}]]: $txt")
         case Disconnect(reason, ts) =>
           Seq(s"[${time(ts)}]] Server disconnected because: $reason")

@@ -16,9 +16,6 @@ import akkastreamchat.pbdomain.v3.ServerCommand
 //  https://doc.akka.io/docs/akka/current/stream/stream-io.html
 object Server {
 
-  val users    = new ConcurrentHashMap[Username, String]()
-  val dmQueues = new ConcurrentHashMap[String, BoundedSourceQueue[ServerCommand]]()
-
   def main(args: Array[String]): Unit = {
     val host = args(0)
     val port = args(1).toInt
@@ -30,7 +27,12 @@ object Server {
       NANOSECONDS
     )
 
-    Bootstrap(host, port, users, dmQueues)
+    /*val users    = new ConcurrentHashMap[Username, String]()
+    val dmQueues = new ConcurrentHashMap[String, BoundedSourceQueue[ServerCommand]]()
+    Bootstrap(host, port, users, dmQueues)*/
+
+    val dmQueues = new ConcurrentHashMap[Username, BoundedSourceQueue[ServerCommand]]()
+    Bootstrap3(host, port, dmQueues)
 
     val _ = scala.io.StdIn.readLine()
     system.log.info("★ ★ ★ ★ ★ ★  Shutting down ❌... ★ ★ ★ ★ ★ ★")

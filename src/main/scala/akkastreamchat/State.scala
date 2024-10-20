@@ -103,7 +103,7 @@ final case class Active(
                 val b = users.keySet().contains(Username(recipient))
 
                 if (a && b) {
-                  val dmMsg = Dm(username, Username(recipient), text, System.currentTimeMillis())
+                  val dmMsg = Dm(username, Username(recipient), text, System.currentTimeMillis(), "")
                   Reply(dmMsg, ReplyType.Direct)
                 } else {
                   Reply(
@@ -118,7 +118,7 @@ final case class Active(
                 )
           }
         } else {
-          Reply(Msg(username, cmd.text, System.currentTimeMillis()), ReplyType.Broadcast)
+          Reply(Msg(username, cmd.text, System.currentTimeMillis(), ""), ReplyType.Broadcast)
         }
 
       case c: SealedValue =>

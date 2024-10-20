@@ -59,6 +59,7 @@ message Dm {
   string desc = 2 [(scalapb.field).type = " akkastreamchat.domain.Username"];
   string txt = 3;
   int64 ts = 4;
+  string conId = 5;
 }
 
 message Msg {
@@ -66,6 +67,7 @@ message Msg {
   string user = 1 [(scalapb.field).type = " akkastreamchat.domain.Username"];
   string txt = 2;
   int64 ts = 3;
+  string conId = 4;
 }
 
 message Disconnect {
