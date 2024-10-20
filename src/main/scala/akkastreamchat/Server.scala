@@ -1,17 +1,11 @@
 package akkastreamchat
 
-import java.util.concurrent.ConcurrentHashMap
-
 import scala.concurrent.duration._
 
 import akka.actor.typed.ActorSystem
 import akka.actor.typed.scaladsl.Behaviors
-import akka.stream.BoundedSourceQueue
 
 import com.typesafe.config.ConfigFactory
-import domain._
-
-import akkastreamchat.pbdomain.v3.ServerCommand
 
 //  https://doc.akka.io/docs/akka/current/stream/stream-io.html
 object Server {
@@ -31,8 +25,7 @@ object Server {
     val dmQueues = new ConcurrentHashMap[String, BoundedSourceQueue[ServerCommand]]()
     Bootstrap(host, port, users, dmQueues)*/
 
-    val dmQueues = new ConcurrentHashMap[Username, BoundedSourceQueue[ServerCommand]]()
-    Bootstrap3(host, port, dmQueues)
+    Bootstrap3(host, port)
 
     val _ = scala.io.StdIn.readLine()
     system.log.info("★ ★ ★ ★ ★ ★  Shutting down ❌... ★ ★ ★ ★ ★ ★")

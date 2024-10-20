@@ -59,7 +59,7 @@ package object akkastreamchat {
     conId: String,
     dmQueues: ConcurrentHashMap[Username, BoundedSourceQueue[ServerCommand]],
     broadcastQueue: BoundedSourceQueue[ServerCommand],
-    chatState: ActorRef[ChatState.Protocol]
+    chatState: ActorRef[ChatUserState.Protocol]
   )(implicit system: ActorSystem[?]): BidiFlow[ByteString, ServerCommand, ServerCommand, ByteString, akka.NotUsed] = {
     implicit val scheduler: Scheduler = system.scheduler
     import system.executionContext
@@ -72,7 +72,7 @@ package object akkastreamchat {
               .takeWhile(_.isSuccess)
               .collect { case Success(cmd) => cmd }
               .mapAsync(1)(clientCmd =>
-                chatState.ask[ServerCommand](ChatState.Protocol.TcpCmd(conId, clientCmd.asMessage.sealedValue, _))
+                chatState.ask[ServerCommand](ChatUserState.Protocol.TcpCmd(conId, clientCmd.asMessage.sealedValue, _))
               )
           )
 

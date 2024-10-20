@@ -32,11 +32,9 @@ object Bootstrap3 {
 
 final case class Bootstrap3(
   host: String,
-  port: Int,
-  dmQueues: ConcurrentHashMap[Username, BoundedSourceQueue[ServerCommand]]
-)(implicit
-  system: ActorSystem[Nothing]
-) {
+  port: Int
+)(implicit system: ActorSystem[Nothing]) {
+
   import system.executionContext
   val shutdown = CoordinatedShutdown(system)
 
@@ -94,8 +92,10 @@ final case class Bootstrap3(
     .to(Sink.foreach(broadcastQueue.offer(_)))
     .run()
 
-  val chatState: ActorRef[ChatState.Protocol] =
-    system.systemActorOf(ChatState(secretToken, broadcastQueue, dmQueues), "chat-state")
+  val dmQueues = new ConcurrentHashMap[Username, BoundedSourceQueue[ServerCommand]]()
+
+  val chatState: ActorRef[ChatUserState.Protocol] =
+    system.systemActorOf(ChatUserState(secretToken, broadcastQueue, dmQueues), "chat-state")
 
   val connectionHandler = Sink.foreach[Tcp.IncomingConnection] { incomingConnection =>
     val connectionId  = wvlet.airframe.ulid.ULID.newULID.toString
@@ -107,7 +107,8 @@ final case class Bootstrap3(
     val mergedDmAndBroadcastSrc: Source[ServerCommand, NotUsed] =
       sharedBroadcastSrc.merge(dmScr, eagerComplete = true)
 
-    chatState.tell(ChatState.Protocol.AcceptNewConnection(connectionId, dmQueue))
+    chatState.tell(ChatUserState.Protocol.AcceptNewConnection(connectionId, dmQueue))
+
     val chatConFlow: Flow[ByteString, ByteString, NotUsed] =
       tcpBidiFlow(connectionId, dmQueues, broadcastQueue, chatState)
         .join(Flow.fromFunction[ServerCommand, ServerCommand](identity))
@@ -115,7 +116,7 @@ final case class Bootstrap3(
     val f = chatConFlow
       .merge(mergedDmAndBroadcastSrc.via(ProtocolCodecsV3.ServerCommand.Encoder), eagerComplete = true)
       .watchTermination() { (_, doneF) =>
-        doneF.onComplete(_ => chatState.tell(ChatState.Protocol.Disconnect(connectionId)))
+        doneF.onComplete(_ => chatState.tell(ChatUserState.Protocol.Disconnect(connectionId)))
         NotUsed
       }
 

@@ -11,7 +11,7 @@ import akkastreamchat.domain.Username
 import akkastreamchat.pbdomain.v3.ClientCommandMessage.SealedValue
 import akkastreamchat.pbdomain.v3.*
 
-object ChatState {
+object ChatUserState {
 
   sealed trait Protocol
   object Protocol {
