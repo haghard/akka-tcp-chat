@@ -31,6 +31,8 @@ package object akkastreamchat {
         akka.pattern.after(ThreadLocalRandom.current().nextInt(5, 15).millis) {
           Future(sendOne(out, cmd, p))(system.executionContext)
         }
+      case QueueOfferResult.Failure(_) =>
+        p.failure(new Exception("Failure"))
       case r: QueueCompletionResult =>
         p.failure(new Exception(s"Unexpected $r"))
     }
@@ -53,14 +55,15 @@ package object akkastreamchat {
         p.failure(new Exception(s"Unexpected $r"))
     }
 
-  implicit val to: Timeout = Timeout(4.seconds)
-
   def tcpBidiFlow(
     conId: String,
     dmQueues: ConcurrentHashMap[Username, BoundedSourceQueue[ServerCommand]],
     broadcastQueue: BoundedSourceQueue[ServerCommand],
     chatState: ActorRef[ChatUserState.Protocol]
-  )(implicit system: ActorSystem[?]): BidiFlow[ByteString, ServerCommand, ServerCommand, ByteString, akka.NotUsed] = {
+  )(implicit
+    system: ActorSystem[?],
+    to: Timeout
+  ): BidiFlow[ByteString, ServerCommand, ServerCommand, ByteString, akka.NotUsed] = {
     implicit val scheduler: Scheduler = system.scheduler
     import system.executionContext
 
@@ -84,30 +87,43 @@ package object akkastreamchat {
                   case SealedValue.Message(msg) =>
                     val p = Promise[ServerCommand]()
                     sendOne(broadcastQueue, msg, p)
-                    p.future.flatMap { cmd =>
-                      Future {
-                        // persist
-                        system.log.info(s"Persist: ${cmd.asMessage.toProtoString}")
-                        Thread.sleep(30)
-                        cmd
-                      }
-                    }
-                  case SealedValue.Dm(v) =>
-                    try {
-                      val from = dmQueues.get(v.src)
-                      val to   = dmQueues.get(v.desc)
-                      val p    = Promise[ServerCommand]()
-                      sendDm(from, to, v, p)
-                      p.future.flatMap { cmd =>
+                    p.future
+                      .flatMap { cmd =>
                         Future {
+                          // persist
                           system.log.info(s"Persist: ${cmd.asMessage.toProtoString}")
                           Thread.sleep(30)
                           cmd
                         }
                       }
-                    } catch {
-                      case NonFatal(_) =>
-                        Future.successful(akkastreamchat.pbdomain.v3.Alert(s"Failed DM $v", System.currentTimeMillis()))
+                      .recoverWith { case NonFatal(_) =>
+                        Future.successful(
+                          akkastreamchat.pbdomain.v3.Alert(s"Failed broadcast $msg", System.currentTimeMillis())
+                        )
+                      }
+                  case SealedValue.Dm(dm) =>
+                    val maybeTo = Option(dmQueues.get(dm.desc))
+                    maybeTo match {
+                      case Some(to) =>
+                        val p = Promise[ServerCommand]()
+                        sendOne(to, dm, p)
+                        p.future
+                          .flatMap { cmd =>
+                            Future {
+                              system.log.info(s"Persist: ${cmd.asMessage.toProtoString}")
+                              Thread.sleep(30)
+                              cmd
+                            }
+                          }
+                          .recoverWith { case NonFatal(_) =>
+                            Future.successful(
+                              akkastreamchat.pbdomain.v3.Alert(s"Failed DM $dm", System.currentTimeMillis())
+                            )
+                          }
+                      case None =>
+                        Future.successful(
+                          akkastreamchat.pbdomain.v3.Alert(s"Failed DM $dm", System.currentTimeMillis())
+                        )
                     }
 
                   case SealedValue.ShowRecent(cmd) =>
@@ -130,8 +146,6 @@ package object akkastreamchat {
               // we drop messages to self
               .filter(_.asMessage.sealedValue match {
                 case SealedValue.Message(c) =>
-                  c.conId != conId
-                case SealedValue.Dm(c) =>
                   c.conId != conId
                 case _ =>
                   true

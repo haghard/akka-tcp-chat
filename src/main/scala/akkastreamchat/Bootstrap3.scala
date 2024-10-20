@@ -21,7 +21,7 @@ import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
 import akka.actor.typed.{ActorRef, ActorSystem}
 import akka.stream.scaladsl.{BroadcastHub, Flow, Keep, Sink, Source, Tcp}
 import akka.stream.{Attributes, BoundedSourceQueue, KillSwitches}
-import akka.util.ByteString
+import akka.util.{ByteString, Timeout}
 
 import akkastreamchat.domain.Username
 import akkastreamchat.pbdomain.v3.*
@@ -97,6 +97,8 @@ final case class Bootstrap3(
   val chatState: ActorRef[ChatUserState.Protocol] =
     system.systemActorOf(ChatUserState(secretToken, broadcastQueue, dmQueues), "chat-state")
 
+  implicit val to: Timeout = Timeout(3.seconds)
+
   val connectionHandler = Sink.foreach[Tcp.IncomingConnection] { incomingConnection =>
     val connectionId  = wvlet.airframe.ulid.ULID.newULID.toString
     val remoteAddress = incomingConnection.remoteAddress
@@ -113,15 +115,14 @@ final case class Bootstrap3(
       tcpBidiFlow(connectionId, dmQueues, broadcastQueue, chatState)
         .join(Flow.fromFunction[ServerCommand, ServerCommand](identity))
 
-    val f = chatConFlow
+    val flow = chatConFlow
       .merge(mergedDmAndBroadcastSrc.via(ProtocolCodecsV3.ServerCommand.Encoder), eagerComplete = true)
       .watchTermination() { (_, doneF) =>
         doneF.onComplete(_ => chatState.tell(ChatUserState.Protocol.Disconnect(connectionId)))
         NotUsed
       }
 
-    incomingConnection.handleWith(f)
-    // incomingConnection.handleWith(chatFlow)
+    incomingConnection.handleWith(flow)
   }
 
   val cons    = Tcp(system).bind(host, port)
