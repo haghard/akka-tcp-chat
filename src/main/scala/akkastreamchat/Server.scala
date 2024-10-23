@@ -25,7 +25,8 @@ object Server {
     val dmQueues = new ConcurrentHashMap[String, BoundedSourceQueue[ServerCommand]]()
     Bootstrap(host, port, users, dmQueues)*/
 
-    Bootstrap3(host, port)
+    // Bootstrap3(host, port)
+    Bootstrap4(host, port)
 
     val _ = scala.io.StdIn.readLine()
     system.log.info("★ ★ ★ ★ ★ ★  Shutting down ❌... ★ ★ ★ ★ ★ ★")

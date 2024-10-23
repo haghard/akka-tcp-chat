@@ -13,6 +13,24 @@ import akkastreamchat.pbdomain.v3.*
 
 object ChatUserState {
 
+  sealed trait Protocol2
+  object Protocol2 {
+
+    final case class TcpCmd(
+      cId: String,
+      cmd: akkastreamchat.pbdomain.v3.ClientCommandMessage.SealedValue
+    ) extends Protocol2
+
+    final case class AcceptNewConnection(
+      cId: String,
+      dm: BoundedSourceQueue[ServerCommand]
+    ) extends Protocol2
+
+    final case class Disconnect(
+      cId: String
+    ) extends Protocol2
+  }
+
   sealed trait Protocol
   object Protocol {
 
