@@ -144,9 +144,13 @@ object Client {
       .build()
     val otp = TOTPGen.now()
 
+    // import scala.concurrent.duration.*
+    //  val msgs = Source.tick(1.seconds, 10.millis, SendMessage(System.currentTimeMillis().toString))
+
     Source
       .single(RequestUsername(username, com.google.protobuf.ByteString.copyFromUtf8(otp)))
       .concat(commandsIn())
+      // .concat(msgs)
       .via(ProtocolCodecsV3.ClientCommand.Encoder)
       .via(connection)
       .toMat(sink)(Keep.right)

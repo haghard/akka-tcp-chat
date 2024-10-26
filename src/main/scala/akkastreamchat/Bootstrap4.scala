@@ -4,10 +4,10 @@ import java.lang.management.ManagementFactory
 import java.time.LocalDateTime
 import java.util.TimeZone
 
+import scala.concurrent.Future
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.duration.NANOSECONDS
-import scala.concurrent.{ExecutionContext, Future}
 import scala.util.Failure
 import scala.util.Success
 
@@ -17,8 +17,9 @@ import akka.actor.CoordinatedShutdown
 import akka.actor.CoordinatedShutdown.*
 import akka.actor.typed.ActorSystem
 import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
-import akka.stream.scaladsl.{BroadcastHub, Flow, Keep, Sink, Source, SourceQueueWithComplete, Tcp}
-import akka.stream.{Attributes, BoundedSourceQueue, OverflowStrategy, QueueCompletionResult, QueueOfferResult}
+import akka.event.LoggingAdapter
+import akka.stream.scaladsl.{BroadcastHub, Flow, Keep, Sink, Source, Tcp}
+import akka.stream.{Attributes, BoundedSourceQueue, QueueCompletionResult, QueueOfferResult}
 import akka.util.ByteString
 
 import Bootstrap4.*
@@ -39,37 +40,36 @@ object Bootstrap4 {
   )
 
   private def offerM(
-    queue: SourceQueueWithComplete[ChatUserState.Protocol2],
+    queue: BoundedSourceQueue[ChatUserState.Protocol2],
     msg: ChatUserState.Protocol2
-  )(implicit sys: ActorSystem[?], retryAfter: FiniteDuration): Future[Unit] =
+  )(implicit sys: ActorSystem[?], retryAfter: FiniteDuration, logger: LoggingAdapter): Future[Unit] =
     queue
-      .offer(msg)
-      .flatMap {
-        case QueueOfferResult.Enqueued =>
-          Future.successful(())
-        case QueueOfferResult.Dropped =>
-          akka.pattern.after(retryAfter)(offerM(queue, msg))
-        case QueueOfferResult.Failure(ex) =>
-          Future.failed(ex)
-        case other: QueueCompletionResult =>
-          Future.failed(new Exception(s"Ubexpected $other"))
-      }(ExecutionContext.parasitic)
+      .offer(msg) match {
+      case QueueOfferResult.Enqueued =>
+        Future.successful(())
+      case QueueOfferResult.Dropped =>
+        akka.pattern.after(retryAfter)(offerM(queue, msg))
+      case QueueOfferResult.Failure(ex) =>
+        Future.failed(ex)
+      case other: QueueCompletionResult =>
+        Future.failed(new Exception(s"Unexpected $other"))
+    }
 }
 
 final case class Bootstrap4(
   host: String,
   port: Int
 )(implicit system: ActorSystem[Nothing]) {
-
   import system.executionContext
-  val shutdown = CoordinatedShutdown(system)
 
-  val dmQueueSize                         = 1 << 2
-  val broadcastQueueSize                  = 1 << 4 // shared queue for all connected client
+  val dmQueueSize       = 1 << 2
+  val incomingQueueSize = 1 << 5
+
+  val shutdown    = CoordinatedShutdown(system)
+  val secretToken = system.settings.config.getString("server.secret-token")
+
   implicit val retryAfter: FiniteDuration = 15.millis
-
-  val loggingAdapter = system.toClassic.log
-  val secretToken    = system.settings.config.getString("server.secret-token")
+  implicit val logger: LoggingAdapter     = system.toClassic.log
 
   val deadline = FiniteDuration(
     system.settings.config
@@ -78,10 +78,12 @@ final case class Bootstrap4(
     NANOSECONDS
   )
 
-  val (inQueue, broadcastHubSrc) =
-    Source
-      .queue[ChatUserState.Protocol2](1 << 7, OverflowStrategy.backpressure)
-      .log("in", cmd => cmd.toString)(loggingAdapter)
+  val (inQueue, inSrc) =
+    Source.queue[ChatUserState.Protocol2](incomingQueueSize).preMaterialize()
+
+  val broadcastHubSrc =
+    inSrc
+      .log("in", cmd => s"[${cmd.toString} Size:${inQueue.size()}]")(logger)
       .withAttributes(Attributes.logLevels(akka.event.Logging.InfoLevel))
       // LOG
       .scan(ChatState()) { (state, c) =>
@@ -122,9 +124,10 @@ final case class Bootstrap4(
         }
       }
       .collect { case ChatState(_, _, Some(cmd)) =>
+        // Thread.sleep(15)
         cmd
       }
-      .toMat(BroadcastHub.sink[ServerCommand](2))(Keep.both)
+      .toMat(BroadcastHub.sink[ServerCommand](2))(Keep.right)
       // .toMat(Sink.asPublisher[ServerCommand](fanout = true))(Keep.both)
       .run()
 
@@ -140,7 +143,7 @@ final case class Bootstrap4(
     val flow =
       Flow
         .lazyFutureFlow { () =>
-          inQueue.offer(ChatUserState.Protocol2.AcceptNewConnection(connectionId, dmQueue)).map { _ =>
+          offerM(inQueue, ChatUserState.Protocol2.AcceptNewConnection(connectionId, dmQueue)).map { _ =>
             val incomingMessages: Sink[ByteString, NotUsed] =
               ProtocolCodecsV3.ClientCommand.Decoder
                 .takeWhile(_.isSuccess)
@@ -155,7 +158,7 @@ final case class Bootstrap4(
           }
         }
         .watchTermination() { (_, doneF) =>
-          doneF.flatMap(_ => inQueue.offer(ChatUserState.Protocol2.Disconnect(connectionId)))
+          doneF.map(_ => inQueue.offer(ChatUserState.Protocol2.Disconnect(connectionId)))
           NotUsed
         }
 
@@ -194,7 +197,7 @@ final case class Bootstrap4(
            |""".stripMargin
       )
 
-      val drainDelay = deadline - 3.seconds // 7-3=4
+      val drainDelay = deadline - 3.seconds // 7-3=4sec to drain msg in-flight
       shutdown.addTask(PhaseServiceUnbind, "tcp-unbind") { () =>
         val startTs = System.currentTimeMillis()
         inQueue.complete()
@@ -203,14 +206,13 @@ final case class Bootstrap4(
           .flatMap(_ =>
             binding
               .unbind()
-              .flatMap { _ =>
-                inQueue.watchCompletion().map { done =>
-                  system.log.info(
-                    s"★ ★ ★ CoordinatedShutdown [http-api.unbind] (${System.currentTimeMillis() - startTs})millis ★ ★ ★"
-                  )
-                  done
-                }
-              }(ExecutionContext.parasitic)
+              .map { _ =>
+                // inQueue.watchCompletion()
+                system.log.info(
+                  s"★ ★ ★ CoordinatedShutdown [http-api.unbind] (${System.currentTimeMillis() - startTs})millis ★ ★ ★"
+                )
+                Done
+              }
           )
       }
 
