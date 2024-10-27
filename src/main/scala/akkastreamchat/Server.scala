@@ -7,7 +7,6 @@ import akka.actor.typed.scaladsl.Behaviors
 
 import com.typesafe.config.ConfigFactory
 
-//  https://doc.akka.io/docs/akka/current/stream/stream-io.html
 object Server {
 
   def main(args: Array[String]): Unit = {

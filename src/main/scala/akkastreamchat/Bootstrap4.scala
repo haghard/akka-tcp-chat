@@ -10,6 +10,7 @@ import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.duration.NANOSECONDS
 import scala.util.Failure
 import scala.util.Success
+import scala.util.control.NonFatal
 
 import akka.Done
 import akka.NotUsed
@@ -24,24 +25,118 @@ import akka.util.ByteString
 
 import Bootstrap4.*
 
-import akkastreamchat.ChatUserState.{ConnectionId, Protocol2}
 import akkastreamchat.domain.Username
-import akkastreamchat.pbdomain.v3.ClientCommandMessage.SealedValue
 import akkastreamchat.pbdomain.v3.*
 
 object Bootstrap4 {
+
+  type ConnectionId = String
+
+  sealed trait Protocol {
+    def connectionId: ConnectionId
+  }
+
+  object Protocol {
+    final case class TcpCmd(
+      connectionId: ConnectionId,
+      cmd: akkastreamchat.pbdomain.v3.ClientCommandMessage.SealedValue
+    ) extends Protocol
+
+    final case class AcceptNewConnection(
+      connectionId: ConnectionId,
+      dm: BoundedSourceQueue[ServerCommand]
+    ) extends Protocol
+
+    final case class Disconnect(
+      connectionId: ConnectionId
+    ) extends Protocol
+  }
+
+  sealed trait InternalInstruction
+
+  object InternalInstruction {
+    final case class Broadcast(msg: ServerCommand) extends InternalInstruction
+
+    final case class WriteSingle(msg: ServerCommand, dm: BoundedSourceQueue[ServerCommand]) extends InternalInstruction
+
+    final case class DmMsg(
+      msg: akkastreamchat.pbdomain.v3.Dm,
+      from: BoundedSourceQueue[ServerCommand],
+      to: BoundedSourceQueue[ServerCommand]
+    ) extends InternalInstruction
+
+    final case object Empty extends InternalInstruction
+  }
+
   private final case object BindFailure extends Reason
 
   final case class ConnectedUser(u: Username, dm: BoundedSourceQueue[ServerCommand])
-  final case class ChatState(
-    connectedUser: Map[ConnectionId, ConnectedUser] = Map.empty[String, ConnectedUser],
-    pendingConnections: Map[ConnectionId, BoundedSourceQueue[ServerCommand]] = Map.empty,
-    cmdToEmit: Option[ServerCommand] = None
-  )
 
-  private def offerM(
-    queue: BoundedSourceQueue[ChatUserState.Protocol2],
-    msg: ChatUserState.Protocol2
+  def callDb(o: InternalInstruction)(implicit
+    system: ActorSystem[?],
+    retryAfter: FiniteDuration,
+    logger: LoggingAdapter
+  ): Future[Option[ServerCommand]] = {
+    import system.executionContext
+    o match {
+      case InternalInstruction.Broadcast(msg) =>
+        msg.asMessage.sealedValue match {
+          case akkastreamchat.pbdomain.v3.ServerCommandMessage.SealedValue.Message(cmd) =>
+            Future {
+              Thread.sleep(50)
+              system.log.info(s"Persist: ${cmd.asMessage.toProtoString}")
+              cmd
+            }.map(Some(_))
+              .recoverWith { case NonFatal(_) =>
+                Future.successful(Some(Alert(s"Failed broadcast $msg", System.currentTimeMillis())))
+              }
+
+          case _ =>
+            Future.successful(Some(msg))
+        }
+
+      case InternalInstruction.DmMsg(msg, from, to) =>
+        Future {
+          system.log.info(s"Persist: ${msg.toProtoString}")
+          Thread.sleep(50)
+          msg
+        }
+          .flatMap(msg => offerM(to, msg).zip(offerM(from, msg)).map(_ => None))
+          .recoverWith { case NonFatal(_) =>
+            Future.successful(Some(Alert(s"Failed broadcast $msg", System.currentTimeMillis())))
+          }
+
+      case InternalInstruction.WriteSingle(msg, dm) =>
+        msg.asMessage.sealedValue match {
+          case akkastreamchat.pbdomain.v3.ServerCommandMessage.SealedValue.ShowRecent(cmd) =>
+            Future {
+              val recent: akkastreamchat.pbdomain.v3.ShowRecent = cmd.withMsgs(
+                Seq(
+                  Msg(Username("jack"), "a", System.currentTimeMillis(), ""),
+                  Msg(Username("scott"), "b", System.currentTimeMillis(), ""),
+                  Msg(Username("adam"), "c", System.currentTimeMillis(), "")
+                )
+              )
+              system.log.info(s"Fetch recent: ${cmd.asMessage.toProtoString}")
+              Thread.sleep(50)
+              recent
+            }
+              .flatMap(msg => offerM(dm, msg).map(_ => None))
+              .recoverWith { case NonFatal(_) =>
+                Future.successful(Some(Alert(s"Failed broadcast $msg", System.currentTimeMillis())))
+              }
+          case _ =>
+            offerM(dm, msg).map(_ => None)
+        }
+
+      case InternalInstruction.Empty =>
+        Future.failed(new Exception("Boom !"))
+    }
+  }
+
+  private def offerM[T](
+    queue: BoundedSourceQueue[T],
+    msg: T
   )(implicit sys: ActorSystem[?], retryAfter: FiniteDuration, logger: LoggingAdapter): Future[Unit] =
     queue
       .offer(msg) match {
@@ -60,15 +155,16 @@ final case class Bootstrap4(
   host: String,
   port: Int
 )(implicit system: ActorSystem[Nothing]) {
+
   import system.executionContext
 
   val dmQueueSize       = 1 << 2
-  val incomingQueueSize = 1 << 5
+  val incomingQueueSize = 1 << 9
 
   val shutdown    = CoordinatedShutdown(system)
   val secretToken = system.settings.config.getString("server.secret-token")
 
-  implicit val retryAfter: FiniteDuration = 15.millis
+  implicit val retryAfter: FiniteDuration = 10.millis
   implicit val logger: LoggingAdapter     = system.toClassic.log
 
   val deadline = FiniteDuration(
@@ -79,78 +175,46 @@ final case class Bootstrap4(
   )
 
   val (inQueue, inSrc) =
-    Source.queue[ChatUserState.Protocol2](incomingQueueSize).preMaterialize()
+    Source.queue[Protocol](incomingQueueSize).preMaterialize()
 
   val broadcastHubSrc =
     inSrc
       .log("in", cmd => s"[${cmd.toString} Size:${inQueue.size()}]")(logger)
       .withAttributes(Attributes.logLevels(akka.event.Logging.InfoLevel))
       // LOG
-      .scan(ChatState()) { (state, c) =>
-        // println("scan " + c)
-        c match {
-          case Protocol2.AcceptNewConnection(cId, dm) =>
-            state.copy(pendingConnections = state.pendingConnections + (cId -> dm))
-          case Protocol2.TcpCmd(cId, cmd) =>
-            cmd match {
-              case SealedValue.RequestUsername(cmd) =>
-                val dm = state.pendingConnections(cId)
-                state.copy(
-                  connectedUser = state.connectedUser + (cId -> ConnectedUser(cmd.user, dm)),
-                  pendingConnections = state.pendingConnections - cId,
-                  cmdToEmit =
-                    Some(Welcome(cmd.user, s"Welcome to the Chat ${cmd.user.name}!", System.currentTimeMillis()))
-                )
-              case SealedValue.SendMessage(msg) =>
-                // println(state.connectedUser.keySet.mkString(","))
-                val cmd = Msg(
-                  state.connectedUser.get(cId).map(_.u).getOrElse(Username("none")),
-                  msg.text,
-                  System.currentTimeMillis(),
-                  cId
-                )
-                state.copy(cmdToEmit = Some(cmd))
-              case SealedValue.Empty =>
-                state
-            }
-          case Protocol2.Disconnect(cId) =>
-            val disUsr = state.connectedUser.get(cId).map(_.u.name).getOrElse("none")
-            val cmd    = Alert(s"$disUsr disconnected", System.currentTimeMillis())
-            state.copy(
-              pendingConnections = state.pendingConnections - cId,
-              connectedUser = state.connectedUser - cId,
-              cmdToEmit = Some(cmd)
-            )
-        }
+      .scan(ChatState4(secretToken))((state, c) => state.applyCmd(c))
+      .collect { case ChatState4(_, _, _, output) if !output.isInstanceOf[InternalInstruction.Empty.type] => output }
+      .mapAsync(1) {
+        callDb(_)
       }
-      .collect { case ChatState(_, _, Some(cmd)) =>
-        // Thread.sleep(15)
-        cmd
-      }
-      .toMat(BroadcastHub.sink[ServerCommand](2))(Keep.right)
-      // .toMat(Sink.asPublisher[ServerCommand](fanout = true))(Keep.both)
+      .collect { case Some(bc) => bc }
+      // .alsoTo(???)
+      .toMat(BroadcastHub.sink[ServerCommand](1))(Keep.right)
       .run()
 
   val connectionHandler = Sink.foreach[Tcp.IncomingConnection] { incomingConnection =>
     val connectionId  = wvlet.airframe.ulid.ULID.newULID.toString
     val remoteAddress = incomingConnection.remoteAddress
+    system.log.info("Connection:{} from {}:{}", connectionId, remoteAddress.getHostString, remoteAddress.getPort)
 
     val (dmQueue, dmScr) = Source.queue[ServerCommand](dmQueueSize).preMaterialize()
-    val outgoing = broadcastHubSrc.merge(dmScr, eagerComplete = true).via(ProtocolCodecsV3.ServerCommand.Encoder)
 
-    system.log.info("Connection:{} from {}:{}", connectionId, remoteAddress.getHostString, remoteAddress.getPort)
+    val outgoing: Source[ByteString, NotUsed] =
+      broadcastHubSrc
+        .merge(dmScr, eagerComplete = true)
+        .via(ProtocolCodecsV3.ServerCommand.Encoder)
 
     val flow =
       Flow
         .lazyFutureFlow { () =>
-          offerM(inQueue, ChatUserState.Protocol2.AcceptNewConnection(connectionId, dmQueue)).map { _ =>
+          offerM(inQueue, Protocol.AcceptNewConnection(connectionId, dmQueue)).map { _ =>
             val incomingMessages: Sink[ByteString, NotUsed] =
               ProtocolCodecsV3.ClientCommand.Decoder
                 .takeWhile(_.isSuccess)
                 .collect { case Success(cmd) => cmd }
                 .to(
                   Sink.foreachAsync(1)(clientCmd =>
-                    offerM(inQueue, ChatUserState.Protocol2.TcpCmd(connectionId, clientCmd.asMessage.sealedValue))
+                    offerM(inQueue, Protocol.TcpCmd(connectionId, clientCmd.asMessage.sealedValue))
                   )
                 )
 
@@ -158,7 +222,7 @@ final case class Bootstrap4(
           }
         }
         .watchTermination() { (_, doneF) =>
-          doneF.map(_ => inQueue.offer(ChatUserState.Protocol2.Disconnect(connectionId)))
+          doneF.map(_ => offerM(inQueue, Protocol.Disconnect(connectionId)))
           NotUsed
         }
 
@@ -207,7 +271,6 @@ final case class Bootstrap4(
             binding
               .unbind()
               .map { _ =>
-                // inQueue.watchCompletion()
                 system.log.info(
                   s"★ ★ ★ CoordinatedShutdown [http-api.unbind] (${System.currentTimeMillis() - startTs})millis ★ ★ ★"
                 )
