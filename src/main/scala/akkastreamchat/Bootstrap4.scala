@@ -103,14 +103,14 @@ object Bootstrap4 {
         }
           .flatMap(msg => offerM(to, msg).zip(offerM(from, msg)).map(_ => None))
           .recoverWith { case NonFatal(_) =>
-            Future.successful(Some(Alert(s"Failed broadcast $msg", System.currentTimeMillis())))
+            Future.successful(Some(Alert(s"Failed DM $msg", System.currentTimeMillis())))
           }
 
       case InternalInstruction.WriteSingle(msg, dm) =>
         msg.asMessage.sealedValue match {
           case akkastreamchat.pbdomain.v3.ServerCommandMessage.SealedValue.ShowRecent(cmd) =>
             Future {
-              val recent: akkastreamchat.pbdomain.v3.ShowRecent = cmd.withMsgs(
+              val recent = cmd.withMsgs(
                 Seq(
                   Msg(Username("jack"), "a", System.currentTimeMillis(), ""),
                   Msg(Username("scott"), "b", System.currentTimeMillis(), ""),
@@ -123,14 +123,14 @@ object Bootstrap4 {
             }
               .flatMap(msg => offerM(dm, msg).map(_ => None))
               .recoverWith { case NonFatal(_) =>
-                Future.successful(Some(Alert(s"Failed broadcast $msg", System.currentTimeMillis())))
+                Future.successful(Some(Alert(s"Failed $msg", System.currentTimeMillis())))
               }
           case _ =>
             offerM(dm, msg).map(_ => None)
         }
 
       case InternalInstruction.Empty =>
-        Future.failed(new Exception("Boom !"))
+        Future.failed(new Exception("Boom !!!"))
     }
   }
 

@@ -18,9 +18,6 @@ final case class ChatState4(
 )(implicit logger: LoggingAdapter) {
   self =>
 
-  override def toString: String =
-    s"Online users: [${connectedUser.keySet.take(10).mkString(",")}]"
-
   def applyCmd(cmd: Protocol): ChatState4 =
     cmd match {
       case Protocol.AcceptNewConnection(cId, dm) =>
@@ -31,6 +28,8 @@ final case class ChatState4(
             if (pendingConnections.contains(cId)) {
               val dmq = self.pendingConnections(cId)
 
+              // connectedUser.keySet()
+              // connectedUser.inverse().get()
               connectedUser.values.find(_.u == cmd.user) match { // ???
                 case Some(_) =>
                   val msg = InternalInstruction.WriteSingle(
@@ -158,4 +157,7 @@ final case class ChatState4(
         logger.info("{}", s.toString)
         s
     }
+
+  override def toString: String =
+    s"Online users:[${connectedUser.keySet.take(10).mkString(",")}]"
 }
