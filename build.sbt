@@ -41,7 +41,7 @@ libraryDependencies ++= Seq(
 
   "com.github.bastiaanjansen" % "otp-java" % "2.0.3",
 
-  "com.google.guava" % "guava" % "32.1.3-jre",
+  //"com.google.guava" % "guava" % "32.1.3-jre",
   "org.scala-lang.modules" %% "scala-collection-contrib" % "0.3.0",
 
   "com.lihaoyi"  % "ammonite" % AmmoniteVersion % "test" cross CrossVersion.full,
