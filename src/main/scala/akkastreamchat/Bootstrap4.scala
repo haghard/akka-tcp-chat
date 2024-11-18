@@ -179,7 +179,10 @@ final case class Bootstrap4(
   val defaultRegistry = new DefaultRegistry() // new NoopRegistry()
 
   val (inQueue, inSrc) =
-    blockingQueue[Protocol](defaultRegistry, "main", incomingQueueSize).preMaterialize()
+    blockingQueue[Protocol](defaultRegistry, "chat", incomingQueueSize).preMaterialize()
+
+  system.scheduler
+    .scheduleAtFixedRate(5.seconds, 30.seconds)(() => printSummary(defaultRegistry))
 
   val broadcastHubSrc =
     inSrc
@@ -193,7 +196,7 @@ final case class Bootstrap4(
         callDb(_)
       }
       .collect { case Some(bc) => bc }
-      .wireTap(_ => printMetrics(defaultRegistry))
+      // .wireTap(_ => printMetrics(defaultRegistry))
       // .alsoTo(???)
       .toMat(BroadcastHub.sink[ServerCommand](1))(Keep.right)
       .run()

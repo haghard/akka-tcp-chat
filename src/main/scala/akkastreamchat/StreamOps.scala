@@ -8,19 +8,26 @@ import akka.stream.stage.{GraphStage, GraphStageLogic, InHandler, OutHandler}
 import akka.stream.{Attributes, BoundedSourceQueue, FlowShape, Inlet, Outlet, QueueOfferResult}
 
 import com.netflix.spectator.api.Registry
+import de.vandermeer.asciitable.{AsciiTable, CWC_LongestWord}
 
 object StreamOps {
   private val nameId = "offered"
 
-  def printMetrics(registry: Registry): Unit = {
-    val it = registry.stream().iterator()
+  def printSummary(registry: Registry): Unit = {
+    val table = new AsciiTable()
+    table.addRule()
+    val it = registry.iterator()
     while (it.hasNext()) {
       val it0 = it.next().measure().iterator()
       while (it0.hasNext()) {
-        val measurement = it0.next()
-        println(measurement.toString())
+        val m = it0.next()
+        table.addRow(m.id().toString, m.value(), m.timestamp())
       }
     }
+    table.addRule()
+    table.getContext.setWidth(200)
+    table.getRenderer.setCWC(new CWC_LongestWord())
+    println(table.render())
 
     /*registry
       .stream()
@@ -37,18 +44,14 @@ object StreamOps {
   def blockingQueue[T](registry: Registry, id: String, size: Int): Source[T, SourceQueue[T]] =
     Source.queue(size).mapMaterializedValue(q => new SourceQueue[T](registry, id, q))
 
-  final class SourceQueue[T] private[akkastreamchat] (
-    registry: Registry,
-    id: String,
-    queue: BoundedSourceQueue[T]
-  ) {
+  final class SourceQueue[T](registry: Registry, id: String, queue: BoundedSourceQueue[T]) {
 
     @volatile private var completed: Boolean = false
     private val baseId                       = registry.createId(nameId, "id", id)
-    private val enqueued                     = registry.counter(baseId.withTag("res", "enqueued"))
-    private val dropped                      = registry.counter(baseId.withTag("res", "droppedFull"))
-    private val closed                       = registry.counter(baseId.withTag("res", "droppedClosed"))
-    private val failed                       = registry.counter(baseId.withTag("res", "droppedFailure"))
+    private val enqueued                     = registry.counter(baseId.withTag("q", "enqueued"))
+    private val dropped                      = registry.counter(baseId.withTag("q", "droppedFull"))
+    private val closed                       = registry.counter(baseId.withTag("q", "droppedClosed"))
+    private val failed                       = registry.counter(baseId.withTag("q", "droppedFailure"))
 
     def offer(value: T): QueueOfferResult =
       queue.offer(value) match {

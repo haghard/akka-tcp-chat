@@ -44,8 +44,9 @@ libraryDependencies ++= Seq(
   //"com.google.guava" % "guava" % "32.1.3-jre",
   "org.scala-lang.modules" %% "scala-collection-contrib" % "0.4.0",
 
-  //https://www.baeldung.com/java-netflix-spectator
   "com.netflix.spectator" % "spectator-api" % "1.8.2",
+  "de.vandermeer" % "asciitable" % "0.3.2",
+  //https://github.com/fuCtor/zoned-balancer-demo/blob/master/src/main/scala/demo/Report.scala#L28
 
   "com.lihaoyi"  % "ammonite" % AmmoniteVersion % "test" cross CrossVersion.full,
 
