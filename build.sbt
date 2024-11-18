@@ -35,14 +35,17 @@ libraryDependencies ++= Seq(
   "com.typesafe.akka" %% "akka-stream" % AkkaVersion,
 
   "com.typesafe.akka" %% "akka-slf4j"      % AkkaVersion,
-  "ch.qos.logback"     % "logback-classic" % "1.5.11",
+  "ch.qos.logback"     % "logback-classic" % "1.5.12",
 
-  "org.wvlet.airframe" %% "airframe-ulid" % "24.7.1",
+  "org.wvlet.airframe" %% "airframe-ulid" % "24.11.0",
 
   "com.github.bastiaanjansen" % "otp-java" % "2.0.3",
 
   //"com.google.guava" % "guava" % "32.1.3-jre",
-  "org.scala-lang.modules" %% "scala-collection-contrib" % "0.3.0",
+  "org.scala-lang.modules" %% "scala-collection-contrib" % "0.4.0",
+
+  //https://www.baeldung.com/java-netflix-spectator
+  "com.netflix.spectator" % "spectator-api" % "1.8.2",
 
   "com.lihaoyi"  % "ammonite" % AmmoniteVersion % "test" cross CrossVersion.full,
 

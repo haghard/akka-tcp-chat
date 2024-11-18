@@ -3,7 +3,8 @@ package akkastreamchat
 import java.nio.charset.StandardCharsets
 
 import akka.event.LoggingAdapter
-import akka.stream.BoundedSourceQueue
+
+import StreamOps.*
 
 import akkastreamchat.Bootstrap4.*
 import akkastreamchat.domain.Username
@@ -13,7 +14,7 @@ import akkastreamchat.pbdomain.v3.*
 final case class ChatState4(
   secretToken: String,
   connectedUser: Map[ConnectionId, ConnectedUser] = Map.empty[String, ConnectedUser],
-  pendingConnections: Map[ConnectionId, BoundedSourceQueue[ServerCommand]] = Map.empty,
+  pendingConnections: Map[ConnectionId, SourceQueue[ServerCommand]] = Map.empty,
   output: InternalInstruction = InternalInstruction.Empty
 )(implicit logger: LoggingAdapter) {
   self =>

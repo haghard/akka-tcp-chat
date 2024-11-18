@@ -20,10 +20,12 @@ import akka.actor.typed.ActorSystem
 import akka.actor.typed.scaladsl.adapter.TypedActorSystemOps
 import akka.event.LoggingAdapter
 import akka.stream.scaladsl.{BroadcastHub, Flow, Keep, Sink, Source, Tcp}
-import akka.stream.{Attributes, BoundedSourceQueue, QueueCompletionResult, QueueOfferResult}
+import akka.stream.{QueueCompletionResult, QueueOfferResult}
 import akka.util.ByteString
 
 import Bootstrap4.*
+import StreamOps.*
+import com.netflix.spectator.api.DefaultRegistry
 
 import akkastreamchat.domain.Username
 import akkastreamchat.pbdomain.v3.*
@@ -44,7 +46,7 @@ object Bootstrap4 {
 
     final case class AcceptNewConnection(
       connectionId: ConnectionId,
-      dm: BoundedSourceQueue[ServerCommand]
+      dm: SourceQueue[ServerCommand]
     ) extends Protocol
 
     final case class Disconnect(
@@ -57,12 +59,12 @@ object Bootstrap4 {
   object InternalInstruction {
     final case class Broadcast(msg: ServerCommand) extends InternalInstruction
 
-    final case class WriteSingle(msg: ServerCommand, dm: BoundedSourceQueue[ServerCommand]) extends InternalInstruction
+    final case class WriteSingle(msg: ServerCommand, dm: SourceQueue[ServerCommand]) extends InternalInstruction
 
     final case class DmMsg(
       msg: akkastreamchat.pbdomain.v3.Dm,
-      from: BoundedSourceQueue[ServerCommand],
-      to: BoundedSourceQueue[ServerCommand]
+      from: SourceQueue[ServerCommand],
+      to: SourceQueue[ServerCommand]
     ) extends InternalInstruction
 
     final case object Empty extends InternalInstruction
@@ -70,7 +72,7 @@ object Bootstrap4 {
 
   private final case object BindFailure extends Reason
 
-  final case class ConnectedUser(u: Username, dm: BoundedSourceQueue[ServerCommand])
+  final case class ConnectedUser(u: Username, dm: SourceQueue[ServerCommand])
 
   def callDb(o: InternalInstruction)(implicit
     system: ActorSystem[?],
@@ -135,7 +137,7 @@ object Bootstrap4 {
   }
 
   private def offerM[T](
-    queue: BoundedSourceQueue[T],
+    queue: SourceQueue[T],
     msg: T
   )(implicit sys: ActorSystem[?], retryAfter: FiniteDuration, logger: LoggingAdapter): Future[Unit] =
     queue
@@ -174,20 +176,24 @@ final case class Bootstrap4(
     NANOSECONDS
   )
 
+  val defaultRegistry = new DefaultRegistry() // new NoopRegistry()
+
   val (inQueue, inSrc) =
-    Source.queue[Protocol](incomingQueueSize).preMaterialize()
+    blockingQueue[Protocol](defaultRegistry, "main", incomingQueueSize).preMaterialize()
 
   val broadcastHubSrc =
     inSrc
-      .log("in", cmd => s"[${cmd.toString} Size:${inQueue.size()}]")(logger)
+      /*
+      .log("in", cmd => s"[${cmd.toString} Size:${inQueue.size}]")(logger)
       .withAttributes(Attributes.logLevels(akka.event.Logging.InfoLevel))
-      // LOG
+       */
       .scan(ChatState4(secretToken))((state, c) => state.applyCmd(c))
       .collect { case ChatState4(_, _, _, output) if !output.isInstanceOf[InternalInstruction.Empty.type] => output }
       .mapAsync(1) {
         callDb(_)
       }
       .collect { case Some(bc) => bc }
+      .wireTap(_ => printMetrics(defaultRegistry))
       // .alsoTo(???)
       .toMat(BroadcastHub.sink[ServerCommand](1))(Keep.right)
       .run()
@@ -197,7 +203,8 @@ final case class Bootstrap4(
     val remoteAddress = incomingConnection.remoteAddress
     system.log.info("Connection:{} from {}:{}", connectionId, remoteAddress.getHostString, remoteAddress.getPort)
 
-    val (dmQueue, dmScr) = Source.queue[ServerCommand](dmQueueSize).preMaterialize()
+    val (dmQueue, dmScr) =
+      blockingQueue[ServerCommand](defaultRegistry, connectionId, dmQueueSize).preMaterialize()
 
     val outgoing: Source[ByteString, NotUsed] =
       broadcastHubSrc
