@@ -18,27 +18,16 @@ object StreamOps {
     table.addRule()
     val it = registry.iterator()
     while (it.hasNext()) {
-      val it0 = it.next().measure().iterator()
-      while (it0.hasNext()) {
-        val m = it0.next()
+      val innerIt = it.next().measure().iterator()
+      while (innerIt.hasNext()) {
+        val m = innerIt.next()
         table.addRow(m.id().toString, m.value(), m.timestamp())
       }
     }
     table.addRule()
-    table.getContext.setWidth(200)
+    table.getContext.setWidth(220)
     table.getRenderer.setCWC(new CWC_LongestWord())
     println(table.render())
-
-    /*registry
-      .stream()
-      .iterator()
-      .asScala
-      .flatMap(_.measure().iterator().asScala)
-      .filter(m => m.id().name().equals(nameId))
-      .foreach { m =>
-        // println(m.toString)
-        println(m.id.toString() + "/" + m.value() + "/" + m.timestamp())
-      }*/
   }
 
   def blockingQueue[T](registry: Registry, id: String, size: Int): Source[T, SourceQueue[T]] =
